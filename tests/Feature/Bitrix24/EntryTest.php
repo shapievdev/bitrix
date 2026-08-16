@@ -130,7 +130,11 @@ class EntryTest extends TestCase
         $this->fakeHandshake();
         $this->post('/', $this->placementPayload());
 
-        $response = $this->get('/app');
+        // Корень приложения — переход на список досок: отдельного экрана
+        // между входом и работой нет.
+        $this->get('/app')->assertRedirect(route('app.boards.index'));
+
+        $response = $this->get('/app/boards');
 
         $response->assertOk();
         $response->assertHeader('Content-Security-Policy');

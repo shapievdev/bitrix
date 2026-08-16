@@ -1,4 +1,5 @@
 <script setup>
+import AppLayout from '../../Layouts/AppLayout.vue'
 import { computed, reactive, watch } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
 import draggable from 'vuedraggable'
@@ -87,88 +88,90 @@ function sync() {
 </script>
 
 <template>
-    <div class="p-4">
-        <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <h1 class="text-lg font-semibold">{{ board.name }}</h1>
-                <p class="mt-0.5 text-xs text-slate-500">
-                    {{ total }} задач · {{ departments.length - 1 }} подразделений
-                    <span v-if="board.syncedAt"> · обновлено {{ board.syncedAt }}</span>
-                </p>
-            </div>
-
-            <div class="flex items-center gap-2">
-                <Link
-                    :href="route('app.boards.settings', board.id)"
-                    class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium transition hover:bg-slate-100"
-                >
-                    Настроить
-                </Link>
-                <button
-                    type="button"
-                    class="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
-                    :disabled="syncing.processing"
-                    @click="sync"
-                >
-                    {{ syncing.processing ? 'Синхронизация…' : 'Обновить из Битрикс24' }}
-                </button>
-            </div>
-        </header>
-
-        <div class="overflow-x-auto pb-4">
-            <div class="min-w-max">
-                <!-- Шапка колонок: одна на всю доску, иначе статусы
-                     повторялись бы над каждой дорожкой. -->
-                <div class="sticky top-0 z-10 flex gap-3 bg-slate-50 pb-2">
-                    <div class="w-40 shrink-0" />
-                    <div
-                        v-for="column in columns"
-                        :key="column.id"
-                        class="flex w-64 shrink-0 items-center gap-2 rounded-md bg-white px-3 py-2 ring-1 ring-slate-200"
-                    >
-                        <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: column.color }" />
-                        <h2 class="truncate text-sm font-semibold">{{ column.name }}</h2>
-                        <span class="ml-auto text-xs tabular-nums text-slate-400">
-                            {{ column.total }}<template v-if="column.wipLimit">/{{ column.wipLimit }}</template>
-                        </span>
-                    </div>
+    <AppLayout>
+        <div class="p-4">
+            <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h1 class="text-lg font-semibold">{{ board.name }}</h1>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        {{ total }} задач · {{ departments.length - 1 }} подразделений
+                        <span v-if="board.syncedAt"> · обновлено {{ board.syncedAt }}</span>
+                    </p>
                 </div>
 
-                <!-- Дорожки подразделений -->
-                <div
-                    v-for="department in departments"
-                    :key="department.id ?? 'none'"
-                    class="flex gap-3 border-t border-slate-200 py-2"
-                >
-                    <div class="w-40 shrink-0 pt-1">
-                        <div class="flex items-center gap-2">
-                            <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: department.color }" />
-                            <span class="truncate text-sm font-medium">{{ department.name }}</span>
+                <div class="flex items-center gap-2">
+                    <Link
+                        :href="route('app.boards.settings', board.id)"
+                        class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium transition hover:bg-slate-100"
+                    >
+                        Настроить
+                    </Link>
+                    <button
+                        type="button"
+                        class="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                        :disabled="syncing.processing"
+                        @click="sync"
+                    >
+                        {{ syncing.processing ? 'Синхронизация…' : 'Обновить из Битрикс24' }}
+                    </button>
+                </div>
+            </header>
+
+            <div class="overflow-x-auto pb-4">
+                <div class="min-w-max">
+                    <!-- Шапка колонок: одна на всю доску, иначе статусы
+                         повторялись бы над каждой дорожкой. -->
+                    <div class="sticky top-0 z-10 flex gap-3 bg-slate-50 pb-2">
+                        <div class="w-40 shrink-0" />
+                        <div
+                            v-for="column in columns"
+                            :key="column.id"
+                            class="flex w-64 shrink-0 items-center gap-2 rounded-md bg-white px-3 py-2 ring-1 ring-slate-200"
+                        >
+                            <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: column.color }" />
+                            <h2 class="truncate text-sm font-semibold">{{ column.name }}</h2>
+                            <span class="ml-auto text-xs tabular-nums text-slate-400">
+                                {{ column.total }}<template v-if="column.wipLimit">/{{ column.wipLimit }}</template>
+                            </span>
                         </div>
-                        <span class="ml-4.5 text-xs text-slate-400">{{ laneCount(department.id) }} задач</span>
                     </div>
 
-                    <draggable
-                        v-for="column in columns"
-                        :key="column.id"
-                        v-model="cells[cellKey(column.id, department.id)]"
-                        :group="`board-${board.id}`"
-                        item-key="id"
-                        class="flex min-h-16 w-64 shrink-0 flex-col gap-2 rounded-md bg-slate-100 p-1.5"
-                        ghost-class="opacity-40"
-                        @change="onChange(column.id, department.id, $event)"
+                    <!-- Дорожки подразделений -->
+                    <div
+                        v-for="department in departments"
+                        :key="department.id ?? 'none'"
+                        class="flex gap-3 border-t border-slate-200 py-2"
                     >
-                        <template #item="{ element }">
-                            <CardTile
-                                :card="element"
-                                :priorities="priorities"
-                                @open="openTask(element.taskId)"
-                                @priority="setPriority(element, $event)"
-                            />
-                        </template>
-                    </draggable>
+                        <div class="w-40 shrink-0 pt-1">
+                            <div class="flex items-center gap-2">
+                                <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: department.color }" />
+                                <span class="truncate text-sm font-medium">{{ department.name }}</span>
+                            </div>
+                            <span class="ml-4.5 text-xs text-slate-400">{{ laneCount(department.id) }} задач</span>
+                        </div>
+
+                        <draggable
+                            v-for="column in columns"
+                            :key="column.id"
+                            v-model="cells[cellKey(column.id, department.id)]"
+                            :group="`board-${board.id}`"
+                            item-key="id"
+                            class="flex min-h-16 w-64 shrink-0 flex-col gap-2 rounded-md bg-slate-100 p-1.5"
+                            ghost-class="opacity-40"
+                            @change="onChange(column.id, department.id, $event)"
+                        >
+                            <template #item="{ element }">
+                                <CardTile
+                                    :card="element"
+                                    :priorities="priorities"
+                                    @open="openTask(element.taskId)"
+                                    @priority="setPriority(element, $event)"
+                                />
+                            </template>
+                        </draggable>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    </AppLayout>
 </template>

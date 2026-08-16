@@ -1,6 +1,7 @@
 <script setup>
+import AppLayout from '../../Layouts/AppLayout.vue'
 import { ref } from 'vue'
-import { Link, router, useForm, usePage } from '@inertiajs/vue3'
+import { Link, router, useForm } from '@inertiajs/vue3'
 
 const props = defineProps({
     board: { type: Object, required: true },
@@ -10,7 +11,6 @@ const props = defineProps({
     bitrixStatuses: { type: Array, required: true },
 })
 
-const page = usePage()
 const tab = ref('departments')
 
 const tabs = [
@@ -46,259 +46,249 @@ const statusLabel = (value) =>
 </script>
 
 <template>
-    <div class="mx-auto max-w-4xl p-6">
-        <header class="mb-5">
-            <Link :href="route('app.boards.show', board.id)" class="text-sm text-slate-500 hover:text-slate-900">
-                ← {{ board.name }}
-            </Link>
-            <h1 class="mt-1 text-lg font-semibold">Настройка доски</h1>
-        </header>
+    <AppLayout>
+        <div class="mx-auto max-w-4xl p-6">
+            <header class="mb-5">
+                <Link :href="route('app.boards.show', board.id)" class="text-sm text-slate-500 hover:text-slate-900">
+                    ← {{ board.name }}
+                </Link>
+                <h1 class="mt-1 text-lg font-semibold">Настройка доски</h1>
+            </header>
 
-        <p
-            v-if="page.props.flash.success"
-            class="mb-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-        >
-            {{ page.props.flash.success }}
-        </p>
-        <p
-            v-if="page.props.flash.error"
-            class="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800"
-        >
-            {{ page.props.flash.error }}
-        </p>
 
-        <nav class="mb-4 flex gap-1 rounded-lg bg-slate-100 p-1">
-            <button
-                v-for="t in tabs"
-                :key="t.key"
-                type="button"
-                class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition"
-                :class="tab === t.key ? 'bg-white shadow-sm' : 'text-slate-500 hover:text-slate-900'"
-                @click="tab = t.key"
-            >
-                {{ t.label }}
-            </button>
-        </nav>
-
-        <!-- Подразделения -->
-        <section v-if="tab === 'departments'" class="space-y-3">
-            <p class="text-xs text-slate-500">
-                Подразделения — это горизонтальные дорожки доски. Если указать отдел
-                оргструктуры Битрикс24, задачи будут попадать в дорожку сами, по отделу
-                ответственного.
-            </p>
-
-            <div class="rounded-lg border border-slate-200 bg-white">
-                <div
-                    v-for="d in departments"
-                    :key="d.id"
-                    class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
+            <nav class="mb-4 flex gap-1 rounded-lg bg-slate-100 p-1">
+                <button
+                    v-for="t in tabs"
+                    :key="t.key"
+                    type="button"
+                    class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition"
+                    :class="tab === t.key ? 'bg-white shadow-sm' : 'text-slate-500 hover:text-slate-900'"
+                    @click="tab = t.key"
                 >
-                    <input
-                        type="color"
-                        :value="d.color"
-                        class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-                        @change="patch('app.departments.update', d.id, { name: d.name, color: $event.target.value })"
-                    >
-                    <input
-                        type="text"
-                        :value="d.name"
-                        class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
-                        @blur="patch('app.departments.update', d.id, { name: $event.target.value, color: d.color })"
-                    >
-                    <span v-if="d.bitrixId" class="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-                        отдел #{{ d.bitrixId }}
-                    </span>
-                    <button
-                        type="button"
-                        class="rounded px-2 py-1 text-xs transition"
-                        :class="d.isDefault ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-100'"
-                        title="Сюда попадают задачи, чей отдел определить не удалось"
-                        @click="patch('app.departments.update', d.id, { name: d.name, color: d.color, is_default: true })"
-                    >
-                        по умолчанию
-                    </button>
-                    <button
-                        type="button"
-                        class="text-xs text-slate-400 transition hover:text-red-600"
-                        @click="remove('app.departments.destroy', d.id)"
-                    >
-                        удалить
-                    </button>
-                </div>
-            </div>
-
-            <form class="flex gap-2" @submit.prevent="addDepartment">
-                <input v-model="departmentForm.color" type="color" class="size-9 cursor-pointer rounded border-0 bg-transparent p-0">
-                <input
-                    v-model="departmentForm.name"
-                    type="text"
-                    placeholder="Название подразделения"
-                    class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-                >
-                <input
-                    v-model.number="departmentForm.bitrix_department_id"
-                    type="number"
-                    placeholder="ID отдела"
-                    title="Необязательно: ID отдела в оргструктуре Битрикс24"
-                    class="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-                >
-                <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
-                    Добавить
+                    {{ t.label }}
                 </button>
-            </form>
+            </nav>
 
-            <button
-                type="button"
-                class="text-sm text-slate-500 underline-offset-2 transition hover:text-slate-900 hover:underline"
-                @click="importDepartments"
-            >
-                Подтянуть отделы из оргструктуры Битрикс24
-            </button>
-        </section>
+            <!-- Подразделения -->
+            <section v-if="tab === 'departments'" class="space-y-3">
+                <p class="text-xs text-slate-500">
+                    Подразделения — это горизонтальные дорожки доски. Если указать отдел
+                    оргструктуры Битрикс24, задачи будут попадать в дорожку сами, по отделу
+                    ответственного.
+                </p>
 
-        <!-- Колонки -->
-        <section v-if="tab === 'columns'" class="space-y-3">
-            <p class="text-xs text-slate-500">
-                Колонка без привязки к статусу Битрикса живёт только здесь — перенос в неё
-                ничего в портале не меняет. В этом и смысл: своих этапов может быть
-                больше, чем штатных статусов.
-            </p>
-
-            <div class="rounded-lg border border-slate-200 bg-white">
-                <div
-                    v-for="c in columns"
-                    :key="c.id"
-                    class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
-                >
-                    <input
-                        type="color"
-                        :value="c.color"
-                        class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-                        @change="patch('app.columns.update', c.id, { name: c.name, color: $event.target.value })"
+                <div class="rounded-lg border border-slate-200 bg-white">
+                    <div
+                        v-for="d in departments"
+                        :key="d.id"
+                        class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
                     >
+                        <input
+                            type="color"
+                            :value="d.color"
+                            class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                            @change="patch('app.departments.update', d.id, { name: d.name, color: $event.target.value })"
+                        >
+                        <input
+                            type="text"
+                            :value="d.name"
+                            class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
+                            @blur="patch('app.departments.update', d.id, { name: $event.target.value, color: d.color })"
+                        >
+                        <span v-if="d.bitrixId" class="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                            отдел #{{ d.bitrixId }}
+                        </span>
+                        <button
+                            type="button"
+                            class="rounded px-2 py-1 text-xs transition"
+                            :class="d.isDefault ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-100'"
+                            title="Сюда попадают задачи, чей отдел определить не удалось"
+                            @click="patch('app.departments.update', d.id, { name: d.name, color: d.color, is_default: true })"
+                        >
+                            по умолчанию
+                        </button>
+                        <button
+                            type="button"
+                            class="text-xs text-slate-400 transition hover:text-red-600"
+                            @click="remove('app.departments.destroy', d.id)"
+                        >
+                            удалить
+                        </button>
+                    </div>
+                </div>
+
+                <form class="flex gap-2" @submit.prevent="addDepartment">
+                    <input v-model="departmentForm.color" type="color" class="size-9 cursor-pointer rounded border-0 bg-transparent p-0">
                     <input
+                        v-model="departmentForm.name"
                         type="text"
-                        :value="c.name"
-                        class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
-                        @blur="patch('app.columns.update', c.id, { name: $event.target.value, color: c.color })"
+                        placeholder="Название подразделения"
+                        class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
                     >
-                    <select
-                        class="rounded border border-slate-200 px-1.5 py-1 text-xs"
-                        :value="c.bitrixStatus ?? ''"
-                        @change="patch('app.columns.update', c.id, { name: c.name, color: c.color, bitrix_status: $event.target.value || null })"
+                    <input
+                        v-model.number="departmentForm.bitrix_department_id"
+                        type="number"
+                        placeholder="ID отдела"
+                        title="Необязательно: ID отдела в оргструктуре Битрикс24"
+                        class="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
                     >
-                        <option value="">без статуса</option>
+                    <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                        Добавить
+                    </button>
+                </form>
+
+                <button
+                    type="button"
+                    class="text-sm text-slate-500 underline-offset-2 transition hover:text-slate-900 hover:underline"
+                    @click="importDepartments"
+                >
+                    Подтянуть отделы из оргструктуры Битрикс24
+                </button>
+            </section>
+
+            <!-- Колонки -->
+            <section v-if="tab === 'columns'" class="space-y-3">
+                <p class="text-xs text-slate-500">
+                    Колонка без привязки к статусу Битрикса живёт только здесь — перенос в неё
+                    ничего в портале не меняет. В этом и смысл: своих этапов может быть
+                    больше, чем штатных статусов.
+                </p>
+
+                <div class="rounded-lg border border-slate-200 bg-white">
+                    <div
+                        v-for="c in columns"
+                        :key="c.id"
+                        class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
+                    >
+                        <input
+                            type="color"
+                            :value="c.color"
+                            class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                            @change="patch('app.columns.update', c.id, { name: c.name, color: $event.target.value })"
+                        >
+                        <input
+                            type="text"
+                            :value="c.name"
+                            class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
+                            @blur="patch('app.columns.update', c.id, { name: $event.target.value, color: c.color })"
+                        >
+                        <select
+                            class="rounded border border-slate-200 px-1.5 py-1 text-xs"
+                            :value="c.bitrixStatus ?? ''"
+                            @change="patch('app.columns.update', c.id, { name: c.name, color: c.color, bitrix_status: $event.target.value || null })"
+                        >
+                            <option value="">без статуса</option>
+                            <option v-for="s in bitrixStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
+                        </select>
+                        <input
+                            type="number"
+                            :value="c.wipLimit"
+                            min="0"
+                            title="Предел незавершённой работы, 0 — без ограничения"
+                            class="w-16 rounded border border-slate-200 px-1.5 py-1 text-xs"
+                            @blur="patch('app.columns.update', c.id, { name: c.name, color: c.color, wip_limit: $event.target.value })"
+                        >
+                        <button
+                            type="button"
+                            class="text-xs text-slate-400 transition hover:text-red-600"
+                            @click="remove('app.columns.destroy', c.id)"
+                        >
+                            удалить
+                        </button>
+                    </div>
+                </div>
+
+                <form class="flex gap-2" @submit.prevent="addColumn">
+                    <input v-model="columnForm.color" type="color" class="size-9 cursor-pointer rounded border-0 bg-transparent p-0">
+                    <input
+                        v-model="columnForm.name"
+                        type="text"
+                        placeholder="Название колонки"
+                        class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                    >
+                    <select v-model="columnForm.bitrix_status" class="rounded-md border border-slate-300 px-2 py-2 text-sm">
+                        <option :value="null">без статуса</option>
                         <option v-for="s in bitrixStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
                     </select>
-                    <input
-                        type="number"
-                        :value="c.wipLimit"
-                        min="0"
-                        title="Предел незавершённой работы, 0 — без ограничения"
-                        class="w-16 rounded border border-slate-200 px-1.5 py-1 text-xs"
-                        @blur="patch('app.columns.update', c.id, { name: c.name, color: c.color, wip_limit: $event.target.value })"
-                    >
-                    <button
-                        type="button"
-                        class="text-xs text-slate-400 transition hover:text-red-600"
-                        @click="remove('app.columns.destroy', c.id)"
-                    >
-                        удалить
+                    <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                        Добавить
                     </button>
-                </div>
-            </div>
+                </form>
+            </section>
 
-            <form class="flex gap-2" @submit.prevent="addColumn">
-                <input v-model="columnForm.color" type="color" class="size-9 cursor-pointer rounded border-0 bg-transparent p-0">
-                <input
-                    v-model="columnForm.name"
-                    type="text"
-                    placeholder="Название колонки"
-                    class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-                >
-                <select v-model="columnForm.bitrix_status" class="rounded-md border border-slate-300 px-2 py-2 text-sm">
-                    <option :value="null">без статуса</option>
-                    <option v-for="s in bitrixStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
-                </select>
-                <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
-                    Добавить
-                </button>
-            </form>
-        </section>
+            <!-- Приоритеты -->
+            <section v-if="tab === 'priorities'" class="space-y-3">
+                <p class="text-xs text-slate-500">
+                    Уровней может быть сколько угодно. Связь со штатным приоритетом нужна,
+                    чтобы он был виден и в самом Битриксе — там всего три градации, поэтому
+                    несколько наших уровней могут указывать на один штатный.
+                </p>
 
-        <!-- Приоритеты -->
-        <section v-if="tab === 'priorities'" class="space-y-3">
-            <p class="text-xs text-slate-500">
-                Уровней может быть сколько угодно. Связь со штатным приоритетом нужна,
-                чтобы он был виден и в самом Битриксе — там всего три градации, поэтому
-                несколько наших уровней могут указывать на один штатный.
-            </p>
-
-            <div class="rounded-lg border border-slate-200 bg-white">
-                <div
-                    v-for="p in priorities"
-                    :key="p.id"
-                    class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
-                >
-                    <input
-                        type="color"
-                        :value="p.color"
-                        class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-                        @change="patch('app.priorities.update', p.id, { name: p.name, color: $event.target.value, weight: p.weight })"
+                <div class="rounded-lg border border-slate-200 bg-white">
+                    <div
+                        v-for="p in priorities"
+                        :key="p.id"
+                        class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
                     >
+                        <input
+                            type="color"
+                            :value="p.color"
+                            class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                            @change="patch('app.priorities.update', p.id, { name: p.name, color: $event.target.value, weight: p.weight })"
+                        >
+                        <input
+                            type="text"
+                            :value="p.name"
+                            class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
+                            @blur="patch('app.priorities.update', p.id, { name: $event.target.value, color: p.color, weight: p.weight })"
+                        >
+                        <input
+                            type="number"
+                            :value="p.weight"
+                            min="0"
+                            title="Вес: чем больше, тем выше приоритет"
+                            class="w-16 rounded border border-slate-200 px-1.5 py-1 text-xs"
+                            @blur="patch('app.priorities.update', p.id, { name: p.name, color: p.color, weight: $event.target.value })"
+                        >
+                        <select
+                            class="rounded border border-slate-200 px-1.5 py-1 text-xs"
+                            :value="p.bitrixPriority ?? ''"
+                            @change="patch('app.priorities.update', p.id, { name: p.name, color: p.color, weight: p.weight, bitrix_priority: $event.target.value === '' ? null : $event.target.value })"
+                        >
+                            <option value="">не передавать</option>
+                            <option value="0">низкий</option>
+                            <option value="1">средний</option>
+                            <option value="2">высокий</option>
+                        </select>
+                        <button
+                            type="button"
+                            class="text-xs text-slate-400 transition hover:text-red-600"
+                            @click="remove('app.priorities.destroy', p.id)"
+                        >
+                            удалить
+                        </button>
+                    </div>
+                </div>
+
+                <form class="flex gap-2" @submit.prevent="addPriority">
+                    <input v-model="priorityForm.color" type="color" class="size-9 cursor-pointer rounded border-0 bg-transparent p-0">
                     <input
+                        v-model="priorityForm.name"
                         type="text"
-                        :value="p.name"
-                        class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
-                        @blur="patch('app.priorities.update', p.id, { name: $event.target.value, color: p.color, weight: p.weight })"
+                        placeholder="Название уровня"
+                        class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
                     >
                     <input
+                        v-model.number="priorityForm.weight"
                         type="number"
-                        :value="p.weight"
                         min="0"
-                        title="Вес: чем больше, тем выше приоритет"
-                        class="w-16 rounded border border-slate-200 px-1.5 py-1 text-xs"
-                        @blur="patch('app.priorities.update', p.id, { name: p.name, color: p.color, weight: $event.target.value })"
+                        class="w-20 rounded-md border border-slate-300 px-3 py-2 text-sm"
                     >
-                    <select
-                        class="rounded border border-slate-200 px-1.5 py-1 text-xs"
-                        :value="p.bitrixPriority ?? ''"
-                        @change="patch('app.priorities.update', p.id, { name: p.name, color: p.color, weight: p.weight, bitrix_priority: $event.target.value === '' ? null : $event.target.value })"
-                    >
-                        <option value="">не передавать</option>
-                        <option value="0">низкий</option>
-                        <option value="1">средний</option>
-                        <option value="2">высокий</option>
-                    </select>
-                    <button
-                        type="button"
-                        class="text-xs text-slate-400 transition hover:text-red-600"
-                        @click="remove('app.priorities.destroy', p.id)"
-                    >
-                        удалить
+                    <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                        Добавить
                     </button>
-                </div>
-            </div>
-
-            <form class="flex gap-2" @submit.prevent="addPriority">
-                <input v-model="priorityForm.color" type="color" class="size-9 cursor-pointer rounded border-0 bg-transparent p-0">
-                <input
-                    v-model="priorityForm.name"
-                    type="text"
-                    placeholder="Название уровня"
-                    class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-                >
-                <input
-                    v-model.number="priorityForm.weight"
-                    type="number"
-                    min="0"
-                    class="w-20 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                >
-                <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
-                    Добавить
-                </button>
-            </form>
-        </section>
-    </div>
+                </form>
+            </section>
+        </div>
+    </AppLayout>
 </template>

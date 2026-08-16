@@ -2,23 +2,18 @@
 
 namespace App\Http\Controllers;
 
-use App\Support\PortalContext;
-use Inertia\Inertia;
-use Inertia\Response;
+use Illuminate\Http\RedirectResponse;
 
 class AppController extends Controller
 {
-    public function home(): Response
+    /**
+     * Точка входа приложения.
+     *
+     * Отдельной главной страницы нет: смысл приложения — доски, и лишний
+     * экран со статистикой портала между входом и работой только мешает.
+     */
+    public function home(): RedirectResponse
     {
-        $portal = PortalContext::portalOrFail();
-
-        return Inertia::render('Dashboard', [
-            'stats' => [
-                'portal' => $portal->domain,
-                'users' => $portal->users()->count(),
-                'installedAt' => $portal->installed_at?->toDateTimeString(),
-                'scope' => $portal->scope ?? [],
-            ],
-        ]);
+        return redirect()->route('app.boards.index');
     }
 }
