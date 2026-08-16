@@ -116,8 +116,13 @@ class Bitrix24Client
     {
         $start = 0;
 
+        // start задаём только здесь и перекрываем то, что передал вызывающий:
+        // при слиянии через + его значение осталось бы навсегда, страница
+        // не сдвигалась бы, а непустой next гнал бы цикл по кругу вечно.
+        unset($params['start']);
+
         do {
-            $payload = $this->raw($method, $params + ['start' => $start]);
+            $payload = $this->raw($method, array_merge($params, ['start' => $start]));
 
             $result = $payload['result'] ?? [];
             $items = $key !== null ? ($result[$key] ?? []) : $result;
@@ -126,7 +131,16 @@ class Bitrix24Client
                 yield $item;
             }
 
-            $start = $payload['next'] ?? null;
+            $next = $payload['next'] ?? null;
+
+            // Предохранитель: если портал вернул next, не сдвинувший
+            // выборку вперёд, обход прекращаем. Зациклившийся генератор
+            // молча долбит чужой REST, пока его не заметят.
+            if ($next !== null && (int) $next <= $start) {
+                break;
+            }
+
+            $start = $next;
         } while ($start !== null && $items !== []);
     }
 

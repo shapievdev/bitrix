@@ -124,6 +124,45 @@ class ClientTest extends TestCase
         $this->assertSame(['1', '2', '3'], $ids);
     }
 
+    public function test_переданный_вызывающим_start_не_ломает_пагинацию(): void
+    {
+        $portal = $this->portal();
+
+        Http::fakeSequence()
+            ->push(['result' => ['tasks' => [['ID' => '1']]], 'next' => 50])
+            ->push(['result' => ['tasks' => [['ID' => '2']]], 'next' => 100])
+            ->push(['result' => ['tasks' => [['ID' => '3']]]]);
+
+        // Раньше start из параметров вызывающего побеждал при слиянии через +,
+        // выборка не сдвигалась, а непустой next гнал обход по кругу вечно.
+        $ids = collect(iterator_to_array(
+            Bitrix24::forPortal($portal)->list('tasks.task.list', ['start' => 0], 'tasks')
+        ))->pluck('ID')->all();
+
+        $this->assertSame(['1', '2', '3'], $ids);
+
+        $starts = collect(Http::recorded())->map(fn ($pair) => $pair[0]['start'])->all();
+        $this->assertSame([0, 50, 100], $starts);
+    }
+
+    public function test_не_сдвигающийся_next_прекращает_обход(): void
+    {
+        $portal = $this->portal();
+
+        // Портал упорно отдаёт next, не двигающий выборку вперёд.
+        Http::fake(['*' => Http::response([
+            'result' => ['tasks' => [['ID' => '1']]],
+            'next' => 0,
+        ])]);
+
+        $items = iterator_to_array(
+            Bitrix24::forPortal($portal)->list('tasks.task.list', [], 'tasks')
+        );
+
+        $this->assertCount(1, $items);
+        Http::assertSentCount(1);
+    }
+
     public function test_batch_разбивает_команды_по_лимиту(): void
     {
         $portal = $this->portal();

@@ -57,9 +57,6 @@ class TaskSynchronizer
         $tasks = iterator_to_array(Bitrix24::forPortal($board->portal)->list('tasks.task.list', [
             'filter' => $board->taskFilter(),
             'select' => self::FIELDS,
-            // Без этого Битрикс на каждой странице считает общее количество
-            // заново — на больших проектах это заметно дороже самой выборки.
-            'start' => 0,
         ], 'tasks'), false);
 
         // Отделы всех ответственных забираем одной пачкой до обхода задач:
