@@ -65,17 +65,26 @@ class PortalRegistrar
      */
     public function upsertCurrentUser(Portal $portal, TokenSet $tokens): PortalUser
     {
-        // Один batch вместо двух запросов: профиль и признак администратора
-        // (user.current его не отдаёт — нужен отдельный метод user.admin).
+        // Один batch вместо трёх запросов: профиль, признак администратора
+        // (user.current его не отдаёт — нужен отдельный user.admin) и
+        // выданные права (app.info их не возвращает — только метод scope).
         $response = $this->bitrix->withToken($portal, $tokens)->batch([
             'profile' => ['user.current', []],
             'is_admin' => ['user.admin', []],
+            'scope' => ['scope', []],
         ]);
 
         $profile = $response['profile'] ?? null;
 
         if (! is_array($profile) || empty($profile['ID'])) {
             throw new Exceptions\Bitrix24Exception('Не удалось получить профиль пользователя по присланному токену.');
+        }
+
+        // Права перечитываем при каждом входе: администратор портала может
+        // изменить их в карточке приложения уже после установки, и узнать
+        // об этом иначе мы сможем только по отказу REST в самый неудобный момент.
+        if (is_array($response['scope'] ?? null)) {
+            $portal->forceFill(['scope' => $response['scope']])->save();
         }
 
         $user = PortalUser::firstOrNew([

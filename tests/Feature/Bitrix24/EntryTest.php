@@ -40,6 +40,7 @@ class EntryTest extends TestCase
                             'WORK_POSITION' => 'Руководитель проектов',
                         ],
                         'is_admin' => $isAdmin,
+                        'scope' => ['task', 'user', 'placement'],
                     ],
                     'result_error' => [],
                 ],
@@ -75,6 +76,8 @@ class EntryTest extends TestCase
         $this->assertSame('access-token-abc', $portal->access_token);
         $this->assertSame('refresh-token-abc', $portal->refresh_token);
         $this->assertTrue($portal->is_active);
+        // Права приходят не с токенами, а отдельным методом scope.
+        $this->assertSame(['task', 'user', 'placement'], $portal->scope);
 
         $user = PortalUser::firstWhere('bitrix_user_id', 42);
 
