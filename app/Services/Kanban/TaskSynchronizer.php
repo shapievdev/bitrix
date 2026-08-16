@@ -6,6 +6,7 @@ use App\Facades\Bitrix24;
 use App\Models\Board;
 use App\Models\BoardColumn;
 use App\Models\TaskCard;
+use App\Models\TaskPriority;
 use App\Services\Bitrix24\Exceptions\Bitrix24Exception;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -32,7 +33,10 @@ class TaskSynchronizer
         'CHANGED_DATE', 'TAGS',
     ];
 
-    public function __construct(protected CardMover $mover) {}
+    public function __construct(
+        protected CardMover $mover,
+        protected DepartmentResolver $departments,
+    ) {}
 
     /**
      * Обойти все задачи, попадающие под фильтр доски.
@@ -50,13 +54,23 @@ class TaskSynchronizer
         $stats = ['created' => 0, 'updated' => 0, 'removed' => 0];
         $seen = [];
 
-        $tasks = Bitrix24::forPortal($board->portal)->list('tasks.task.list', [
+        $tasks = iterator_to_array(Bitrix24::forPortal($board->portal)->list('tasks.task.list', [
             'filter' => $board->taskFilter(),
             'select' => self::FIELDS,
             // Без этого Битрикс на каждой странице считает общее количество
             // заново — на больших проектах это заметно дороже самой выборки.
             'start' => 0,
-        ], 'tasks');
+        ], 'tasks'), false);
+
+        // Отделы всех ответственных забираем одной пачкой до обхода задач:
+        // запрос профиля на каждую карточку выбил бы лимит REST на первой
+        // же сотне.
+        $this->departments->warmUp($board->portal, array_map(
+            fn (array $task) => (int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0),
+            $tasks,
+        ));
+
+        $priorities = $this->priorityMap();
 
         foreach ($tasks as $task) {
             $taskId = (int) ($task['id'] ?? $task['ID'] ?? 0);
@@ -70,8 +84,8 @@ class TaskSynchronizer
             $card = $board->cards()->firstWhere('bitrix_task_id', $taskId);
 
             $card
-                ? $stats['updated'] += (int) $this->updateCard($card, $task)
-                : $stats['created'] += (int) (bool) $this->createCard($board, $task);
+                ? $stats['updated'] += (int) $this->updateCard($card, $task, $priorities)
+                : $stats['created'] += (int) (bool) $this->createCard($board, $task, $priorities);
         }
 
         $stats['removed'] = $this->removeVanished($board, $seen);
@@ -106,14 +120,25 @@ class TaskSynchronizer
 
         $task = $task['task'] ?? $task;
         $touched = 0;
+        $boards = $this->boardsFor($task);
 
-        foreach ($this->boardsFor($task) as $board) {
+        if ($boards->isEmpty()) {
+            return 0;
+        }
+
+        $priorities = $this->priorityMap();
+        $this->departments->warmUp(
+            $boards->first()->portal,
+            [(int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0)],
+        );
+
+        foreach ($boards as $board) {
             $card = $board->cards()->firstWhere('bitrix_task_id', $taskId);
 
             if ($card) {
-                $this->updateCard($card, $task);
+                $this->updateCard($card, $task, $priorities);
             } else {
-                $this->createCard($board, $task);
+                $this->createCard($board, $task, $priorities);
             }
 
             $touched++;
@@ -141,7 +166,7 @@ class TaskSynchronizer
         $taskId = (int) ($task['id'] ?? $task['ID'] ?? 0);
 
         return Board::query()
-            ->with('columns')
+            ->with('columns', 'portal')
             ->where(function ($query) use ($groupId, $taskId) {
                 // Доски проекта, к которому относится задача.
                 $query->when($groupId > 0, fn ($q) => $q->orWhere('bitrix_group_id', $groupId));
@@ -155,7 +180,10 @@ class TaskSynchronizer
             ->get();
     }
 
-    protected function createCard(Board $board, array $task): ?TaskCard
+    /**
+     * @param  Collection<int, TaskPriority>  $priorities
+     */
+    protected function createCard(Board $board, array $task, Collection $priorities): ?TaskCard
     {
         $column = $this->columnFor($board, $task);
 
@@ -164,22 +192,47 @@ class TaskSynchronizer
         }
 
         $attributes = $this->attributesFrom($task);
+        $department = $this->departments->forResponsible($attributes['responsible_id']);
 
         return $board->cards()->create($attributes + [
             'portal_id' => $board->portal_id,
             'board_column_id' => $column->id,
+            'department_id' => $department?->id,
+            'task_priority_id' => $this->priorityFor($attributes['priority'], $priorities)?->id,
             'bitrix_task_id' => (int) ($task['id'] ?? $task['ID']),
-            'position' => $board->cards()->where('board_column_id', $column->id)->count(),
+            'position' => $board->cards()
+                ->where('board_column_id', $column->id)
+                ->when(
+                    $department === null,
+                    fn ($q) => $q->whereNull('department_id'),
+                    fn ($q) => $q->where('department_id', $department->id),
+                )
+                ->count(),
         ]);
     }
 
     /**
+     * @param  Collection<int, TaskPriority>  $priorities
      * @return bool Было ли что-то изменено.
      */
-    protected function updateCard(TaskCard $card, array $task): bool
+    protected function updateCard(TaskCard $card, array $task, Collection $priorities): bool
     {
         $attributes = $this->attributesFrom($task);
         $previousStatus = $card->bitrix_status;
+
+        // Приоритет тянем из Битрикса, только пока его не переопределили
+        // у нас: своих уровней больше, чем штатных, и обратное отображение
+        // «высокий → критический» неоднозначно.
+        if ($card->task_priority_id === null) {
+            $attributes['task_priority_id'] = $this->priorityFor($attributes['priority'], $priorities)?->id;
+        }
+
+        // Сменился ответственный — задача могла уйти в другой отдел.
+        // Но не трогаем дорожку, если её выставили руками.
+        if (! $card->department_locked) {
+            $attributes['department_id'] = $this->departments
+                ->forResponsible($attributes['responsible_id'])?->id;
+        }
 
         $card->fill($attributes);
         $changed = $card->isDirty();
@@ -198,6 +251,32 @@ class TaskSynchronizer
         }
 
         return $changed;
+    }
+
+    /**
+     * Уровни приоритета портала, разложенные по штатному PRIORITY.
+     *
+     * @return Collection<int, TaskPriority>
+     */
+    protected function priorityMap(): Collection
+    {
+        $all = TaskPriority::query()->orderBy('weight')->get();
+
+        // На один штатный приоритет может быть заведено несколько наших
+        // («Высокий» и «Критический» оба ложатся на 2). При импорте берём
+        // младший по весу — повышение до критического остаётся ручным.
+        return $all->filter(fn ($p) => $p->bitrix_priority !== null)
+            ->groupBy('bitrix_priority')
+            ->map(fn ($group) => $group->first());
+    }
+
+    /**
+     * @param  Collection<int, TaskPriority>  $priorities
+     */
+    protected function priorityFor(?int $bitrixPriority, Collection $priorities): ?TaskPriority
+    {
+        return $priorities->get($bitrixPriority ?? 1)
+            ?? $priorities->first(fn ($p) => $p->is_default);
     }
 
     /**
@@ -227,7 +306,9 @@ class TaskSynchronizer
             'responsible_id' => $this->toId($get('responsibleId', 'RESPONSIBLE_ID')),
             'creator_id' => $this->toId($get('createdBy', 'CREATED_BY')),
             'bitrix_status' => $this->toId($get('status', 'STATUS')),
-            'priority' => $this->toId($get('priority', 'PRIORITY')),
+            // Не через toId: там ноль означает «не задано», а у приоритета
+            // 0 — это валидный «низкий», и он терялся бы при импорте.
+            'priority' => $this->toNullableInt($get('priority', 'PRIORITY')),
             'deadline' => $this->toDate($get('deadline', 'DEADLINE')),
             'closed_at' => $this->toDate($get('closedDate', 'CLOSED_DATE')),
             'fields' => [
@@ -238,9 +319,20 @@ class TaskSynchronizer
         ];
     }
 
+    /**
+     * Идентификатор: ноль в Битриксе означает «не указан».
+     */
     protected function toId(mixed $value): ?int
     {
         return $value === null || $value === '' || $value === '0' ? null : (int) $value;
+    }
+
+    /**
+     * Число, для которого ноль — осмысленное значение.
+     */
+    protected function toNullableInt(mixed $value): ?int
+    {
+        return $value === null || $value === '' ? null : (int) $value;
     }
 
     protected function toDate(mixed $value): ?Carbon

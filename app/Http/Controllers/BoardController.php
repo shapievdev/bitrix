@@ -3,6 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Board;
+use App\Models\BoardColumn;
+use App\Models\Department;
+use App\Models\TaskCard;
+use App\Models\TaskPriority;
 use App\Services\Kanban\BoardBuilder;
 use App\Services\Kanban\TaskSynchronizer;
 use App\Support\PortalContext;
@@ -34,10 +38,20 @@ class BoardController extends Controller
 
     public function show(Board $board): Response
     {
-        $board->load([
-            'columns',
-            'columns.cards' => fn ($query) => $query->orderBy('position'),
-        ]);
+        $board->load('columns');
+
+        $cards = $board->cards()
+            ->with('priorityLevel')
+            ->orderBy('position')
+            ->get();
+
+        // Дорожки: подразделения плюс обязательная «Без подразделения».
+        // Задачи, чей отдел определить не удалось, прятать нельзя —
+        // именно они и теряются на практике.
+        $departments = Department::query()->orderBy('position')->get()
+            ->map(fn (Department $d) => ['id' => $d->id, 'name' => $d->name, 'color' => $d->color])
+            ->push(['id' => null, 'name' => 'Без подразделения', 'color' => '#cbd5e1'])
+            ->values();
 
         return Inertia::render('Boards/Show', [
             'board' => [
@@ -45,23 +59,43 @@ class BoardController extends Controller
                 'name' => $board->name,
                 'syncedAt' => $board->synced_at?->diffForHumans(),
             ],
-            'columns' => $board->columns->map(fn ($column) => [
+
+            'columns' => $board->columns->map(fn (BoardColumn $column) => [
                 'id' => $column->id,
                 'name' => $column->name,
                 'color' => $column->color,
                 'wipLimit' => $column->wip_limit,
                 'isFinal' => $column->is_final,
-                'overLimit' => $column->isOverWipLimit($column->cards->count()),
-                'cards' => $column->cards->map(fn ($card) => [
-                    'id' => $card->id,
-                    'taskId' => $card->bitrix_task_id,
-                    'title' => $card->title,
-                    'responsibleId' => $card->responsible_id,
-                    'priority' => $card->priority,
-                    'deadline' => $card->deadline?->format('d.m.Y'),
-                    'isOverdue' => $card->isOverdue(),
-                ])->values(),
+                'total' => $cards->where('board_column_id', $column->id)->count(),
             ])->values(),
+
+            'departments' => $departments,
+
+            // Карточки отдаём плоским списком с координатами ячейки:
+            // раскладывать их вложенными массивами по колонкам и дорожкам —
+            // это пересборка всей структуры при каждом перетаскивании.
+            'cards' => $cards->map(fn (TaskCard $card) => [
+                'id' => $card->id,
+                'columnId' => $card->board_column_id,
+                'departmentId' => $card->department_id,
+                'position' => $card->position,
+                'taskId' => $card->bitrix_task_id,
+                'title' => $card->title,
+                'responsibleId' => $card->responsible_id,
+                'deadline' => $card->deadline?->format('d.m.Y'),
+                'isOverdue' => $card->isOverdue(),
+                'priority' => $card->priorityLevel ? [
+                    'name' => $card->priorityLevel->name,
+                    'color' => $card->priorityLevel->color,
+                ] : null,
+            ])->values(),
+
+            'priorities' => TaskPriority::query()->orderByDesc('weight')->get()
+                ->map(fn (TaskPriority $p) => [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'color' => $p->color,
+                ])->values(),
         ]);
     }
 

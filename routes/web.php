@@ -6,6 +6,7 @@ use App\Http\Controllers\Bitrix24\EventController;
 use App\Http\Controllers\Bitrix24\InstallController;
 use App\Http\Controllers\BoardController;
 use App\Http\Controllers\CardController;
+use App\Http\Controllers\DictionaryController;
 use App\Http\Middleware\BitrixFrameHeaders;
 use App\Http\Middleware\ResolveBitrixPortal;
 use Illuminate\Support\Facades\Route;
@@ -60,4 +61,22 @@ Route::middleware([ResolveBitrixPortal::class, BitrixFrameHeaders::class])
         Route::post('boards/{board}/sync', [BoardController::class, 'sync'])->name('boards.sync');
 
         Route::patch('cards/{card}/move', [CardController::class, 'move'])->name('cards.move');
+        Route::patch('cards/{card}/priority', [CardController::class, 'priority'])->name('cards.priority');
+
+        // Справочники: подразделения и приоритеты — портальные,
+        // колонки — свои у каждой доски.
+        Route::get('boards/{board}/settings', [DictionaryController::class, 'index'])->name('boards.settings');
+
+        Route::post('departments', [DictionaryController::class, 'storeDepartment'])->name('departments.store');
+        Route::patch('departments/{department}', [DictionaryController::class, 'updateDepartment'])->name('departments.update');
+        Route::delete('departments/{department}', [DictionaryController::class, 'destroyDepartment'])->name('departments.destroy');
+        Route::post('departments/import', [DictionaryController::class, 'importDepartments'])->name('departments.import');
+
+        Route::post('priorities', [DictionaryController::class, 'storePriority'])->name('priorities.store');
+        Route::patch('priorities/{priority}', [DictionaryController::class, 'updatePriority'])->name('priorities.update');
+        Route::delete('priorities/{priority}', [DictionaryController::class, 'destroyPriority'])->name('priorities.destroy');
+
+        Route::post('boards/{board}/columns', [DictionaryController::class, 'storeColumn'])->name('columns.store');
+        Route::patch('columns/{column}', [DictionaryController::class, 'updateColumn'])->name('columns.update');
+        Route::delete('columns/{column}', [DictionaryController::class, 'destroyColumn'])->name('columns.destroy');
     });

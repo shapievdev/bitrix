@@ -227,8 +227,15 @@ class BoardHttpTest extends TestCase
             ->assertInertia(fn ($page) => $page
                 ->component('Boards/Show')
                 ->has('columns', 4)
-                ->where('columns.0.cards.0.title', 'Задача')
-                ->where('columns.0.cards.0.isOverdue', true)
+                // Типовые подразделения плюс обязательная последняя дорожка
+                // «Без подразделения» — задачи без отдела прятать нельзя.
+                ->has('departments', 5)
+                ->where('departments.4.id', null)
+                ->where('departments.4.name', 'Без подразделения')
+                ->has('cards', 1)
+                ->where('cards.0.title', 'Задача')
+                ->where('cards.0.isOverdue', true)
+                ->where('cards.0.departmentId', null)
             );
     }
 }

@@ -32,6 +32,9 @@ class TaskCard extends Model
         'portal_id',
         'board_id',
         'board_column_id',
+        'department_id',
+        'department_locked',
+        'task_priority_id',
         'bitrix_task_id',
         'position',
         'title',
@@ -55,7 +58,20 @@ class TaskCard extends Model
             'bitrix_status' => 'integer',
             'priority' => 'integer',
             'position' => 'integer',
+            'department_locked' => 'boolean',
         ];
+    }
+
+    /** @return BelongsTo<Department, $this> */
+    public function department(): BelongsTo
+    {
+        return $this->belongsTo(Department::class);
+    }
+
+    /** @return BelongsTo<TaskPriority, $this> */
+    public function priorityLevel(): BelongsTo
+    {
+        return $this->belongsTo(TaskPriority::class, 'task_priority_id');
     }
 
     /** @return BelongsTo<Board, $this> */

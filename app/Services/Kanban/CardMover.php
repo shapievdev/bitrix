@@ -7,6 +7,7 @@ use App\Models\BoardColumn;
 use App\Models\CardTransition;
 use App\Models\PortalUser;
 use App\Models\TaskCard;
+use App\Models\TaskPriority;
 use App\Services\Bitrix24\Exceptions\Bitrix24Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -20,15 +21,19 @@ use Illuminate\Support\Facades\Log;
 class CardMover
 {
     /**
-     * Переместить карточку в колонку на заданную позицию.
+     * Переместить карточку в ячейку «колонка × дорожка» на заданную позицию.
      *
-     * @param  ?int  $position  Позиция в новой колонке, начиная с 0.
-     *                          null — в конец.
+     * Ячейка задаётся всегда целиком: на доске с дорожками одна колонка —
+     * это несколько независимых стопок карточек, и порядок в каждой свой.
+     *
+     * @param  ?int  $departmentId  Дорожка подразделения; null — «Без подразделения».
+     * @param  ?int  $position  Позиция в ячейке, начиная с 0. null — в конец.
      * @param  bool  $pushToBitrix  Отправить ли новый статус на портал.
      */
     public function move(
         TaskCard $card,
         BoardColumn $target,
+        ?int $departmentId = null,
         ?int $position = null,
         ?PortalUser $actor = null,
         bool $pushToBitrix = true,
@@ -38,15 +43,27 @@ class CardMover
         }
 
         $source = $card->column;
+        $sourceDepartmentId = $card->department_id;
         $enteredAt = $card->enteredColumnAt();
 
-        DB::transaction(function () use ($card, $target, $position, $actor, $source, $enteredAt) {
-            // Блокируем карточки обеих колонок: два одновременных
+        DB::transaction(function () use (
+            $card, $target, $departmentId, $position, $actor, $source, $sourceDepartmentId, $enteredAt
+        ) {
+            // Блокируем карточки обеих ячеек: два одновременных
             // перетаскивания иначе выдадут двум карточкам одну позицию.
-            $this->lockColumns(array_unique(array_filter([$source?->id, $target->id])));
+            $this->lockCells([
+                [$source?->id, $sourceDepartmentId],
+                [$target->id, $departmentId],
+            ]);
 
             $this->detach($card);
-            $this->insert($card, $target, $position);
+            $this->insert($card, $target, $departmentId, $position);
+
+            // Дорожку сменили руками — автоподстановка по отделу
+            // ответственного больше не должна её перебивать.
+            if ($actor !== null && $departmentId !== $sourceDepartmentId) {
+                $card->forceFill(['department_locked' => true])->save();
+            }
 
             // Перемещение внутри колонки историей не считаем — иначе отчёт
             // о времени на этапе будет обнуляться при любой сортировке.
@@ -94,9 +111,37 @@ class CardMover
             return $card;
         }
 
+        // Дорожку сохраняем: сменился статус, а не подразделение.
         // pushToBitrix отключён намеренно: статус пришёл оттуда, отправлять
         // его обратно — прямой путь к бесконечному циклу событий.
-        return $this->move($card, $target, pushToBitrix: false);
+        return $this->move($card, $target, $card->department_id, pushToBitrix: false);
+    }
+
+    /**
+     * Отразить наш приоритет в штатном PRIORITY задачи.
+     *
+     * Ошибку REST не поднимаем по той же причине, что и со статусом:
+     * приоритет у нас уже сохранён, а портал догонит при синхронизации.
+     */
+    public function pushPriority(TaskCard $card, TaskPriority $priority): void
+    {
+        if ($priority->bitrix_priority === null) {
+            return;
+        }
+
+        try {
+            Bitrix24::forPortal($card->portal)->call('tasks.task.update', [
+                'taskId' => $card->bitrix_task_id,
+                'fields' => ['PRIORITY' => $priority->bitrix_priority],
+            ]);
+
+            $card->forceFill(['priority' => $priority->bitrix_priority])->save();
+        } catch (Bitrix24Exception $e) {
+            Log::warning('Канбан: не удалось передать приоритет в Битрикс24', [
+                'task' => $card->bitrix_task_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -131,12 +176,28 @@ class CardMover
     }
 
     /**
-     * Закрыть дыру, оставшуюся от карточки в прежней колонке.
+     * Ограничить выборку одной ячейкой «колонка × дорожка».
+     *
+     * Отдельным методом, потому что department_id бывает null, а
+     * `where('department_id', null)` в SQL не совпадает ни с чем.
+     */
+    protected function inCell($query, ?int $columnId, ?int $departmentId)
+    {
+        return $query
+            ->where('board_column_id', $columnId)
+            ->when(
+                $departmentId === null,
+                fn ($q) => $q->whereNull('department_id'),
+                fn ($q) => $q->where('department_id', $departmentId),
+            );
+    }
+
+    /**
+     * Закрыть дыру, оставшуюся от карточки в прежней ячейке.
      */
     protected function detach(TaskCard $card): void
     {
-        TaskCard::query()
-            ->where('board_column_id', $card->board_column_id)
+        $this->inCell(TaskCard::query(), $card->board_column_id, $card->department_id)
             ->where('position', '>', $card->position)
             ->decrement('position');
     }
@@ -144,10 +205,9 @@ class CardMover
     /**
      * Раздвинуть карточки и вписать нашу.
      */
-    protected function insert(TaskCard $card, BoardColumn $target, ?int $position): void
+    protected function insert(TaskCard $card, BoardColumn $target, ?int $departmentId, ?int $position): void
     {
-        $count = TaskCard::query()
-            ->where('board_column_id', $target->id)
+        $count = $this->inCell(TaskCard::query(), $target->id, $departmentId)
             ->where('id', '!=', $card->id)
             ->count();
 
@@ -155,30 +215,31 @@ class CardMover
             ? $count
             : max(0, min($position, $count));
 
-        TaskCard::query()
-            ->where('board_column_id', $target->id)
+        $this->inCell(TaskCard::query(), $target->id, $departmentId)
             ->where('id', '!=', $card->id)
             ->where('position', '>=', $position)
             ->increment('position');
 
         $card->forceFill([
             'board_column_id' => $target->id,
+            'department_id' => $departmentId,
             'position' => $position,
         ])->save();
     }
 
     /**
-     * @param  array<int>  $columnIds
+     * @param  array<int, array{0: ?int, 1: ?int}>  $cells  Пары «колонка, дорожка»
      */
-    protected function lockColumns(array $columnIds): void
+    protected function lockCells(array $cells): void
     {
-        if ($columnIds === []) {
-            return;
-        }
+        foreach ($cells as [$columnId, $departmentId]) {
+            if ($columnId === null) {
+                continue;
+            }
 
-        TaskCard::query()
-            ->whereIn('board_column_id', $columnIds)
-            ->lockForUpdate()
-            ->pluck('id');
+            $this->inCell(TaskCard::query(), $columnId, $departmentId)
+                ->lockForUpdate()
+                ->pluck('id');
+        }
     }
 }

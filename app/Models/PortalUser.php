@@ -23,6 +23,7 @@ use Illuminate\Foundation\Auth\Access\Authorizable;
 class PortalUser extends Model implements Authenticatable
 {
     use Authorizable;
+
     /** @use HasFactory<PortalUserFactory> */
     use HasFactory;
 
@@ -36,6 +37,7 @@ class PortalUser extends Model implements Authenticatable
         'avatar',
         'position',
         'timezone',
+        'bitrix_department_ids',
         'is_admin',
         'access_token',
         'refresh_token',
@@ -57,6 +59,7 @@ class PortalUser extends Model implements Authenticatable
             'token_expires_at' => 'datetime',
             'last_login_at' => 'datetime',
             'is_admin' => 'boolean',
+            'bitrix_department_ids' => 'array',
         ];
     }
 

@@ -16,15 +16,23 @@ use Illuminate\Support\Facades\DB;
  */
 class BoardBuilder
 {
+    public function __construct(protected PortalDictionaries $dictionaries) {}
+
     public function create(
         string $name,
         ?int $groupId = null,
         ?PortalUser $author = null,
         ?array $filter = null,
     ): Board {
-        return DB::transaction(function () use ($name, $groupId, $author, $filter) {
+        $portal = PortalContext::portalOrFail();
+
+        // Справочники нужны до первой синхронизации: иначе задачи придут
+        // без дорожек и без приоритетов, и раскладывать их придётся руками.
+        $this->dictionaries->ensure($portal);
+
+        return DB::transaction(function () use ($name, $groupId, $author, $filter, $portal) {
             $board = Board::create([
-                'portal_id' => PortalContext::portalOrFail()->id,
+                'portal_id' => $portal->id,
                 'name' => $name,
                 'bitrix_group_id' => $groupId,
                 'filter' => $filter,
