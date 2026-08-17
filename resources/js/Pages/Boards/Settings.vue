@@ -219,12 +219,26 @@ const statusLabel = (value) =>
             <!-- Приоритеты -->
             <section v-if="tab === 'priorities'" class="space-y-3">
                 <p class="text-xs text-slate-500">
-                    Уровней может быть сколько угодно. Связь со штатным приоритетом нужна,
-                    чтобы он был виден и в самом Битриксе — там всего три градации, поэтому
-                    несколько наших уровней могут указывать на один штатный.
+                    Уровней может быть сколько угодно. <b>Вес</b> задаёт, насколько уровень
+                    важнее остальных: чем больше число, тем выше приоритет. По нему уровни
+                    сортируются в списках.
+                </p>
+                <p class="text-xs text-slate-500">
+                    Связь со штатным приоритетом нужна, чтобы он был виден и в самом
+                    Битриксе — там всего три градации. Если на один штатный указывают
+                    несколько ваших уровней, при импорте задачи ставится
+                    <b>наименее важный из них</b>: повышать приоритет самовольно приложение
+                    не должно.
                 </p>
 
                 <div class="rounded-lg border border-slate-200 bg-white">
+                    <div class="flex items-center gap-3 border-b border-slate-200 px-3 py-1.5 text-[11px] uppercase tracking-wide text-slate-400">
+                        <span class="w-6 shrink-0" />
+                        <span class="flex-1">Название</span>
+                        <span class="w-16 text-center">Вес</span>
+                        <span class="w-28">В Битриксе</span>
+                        <span class="w-14" />
+                    </div>
                     <div
                         v-for="p in priorities"
                         :key="p.id"
@@ -246,12 +260,12 @@ const statusLabel = (value) =>
                             type="number"
                             :value="p.weight"
                             min="0"
-                            title="Вес: чем больше, тем выше приоритет"
-                            class="w-16 rounded border border-slate-200 px-1.5 py-1 text-xs"
+                            title="Чем больше число, тем выше приоритет"
+                            class="w-16 rounded border border-slate-200 px-1.5 py-1 text-center text-xs"
                             @blur="patch('app.priorities.update', p.id, { name: p.name, color: p.color, weight: $event.target.value })"
                         >
                         <select
-                            class="rounded border border-slate-200 px-1.5 py-1 text-xs"
+                            class="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs"
                             :value="p.bitrixPriority ?? ''"
                             @change="patch('app.priorities.update', p.id, { name: p.name, color: p.color, weight: p.weight, bitrix_priority: $event.target.value === '' ? null : $event.target.value })"
                         >
@@ -262,7 +276,7 @@ const statusLabel = (value) =>
                         </select>
                         <button
                             type="button"
-                            class="text-xs text-slate-400 transition hover:text-red-600"
+                            class="w-14 text-right text-xs text-slate-400 transition hover:text-red-600"
                             @click="remove('app.priorities.destroy', p.id)"
                         >
                             удалить
@@ -282,7 +296,9 @@ const statusLabel = (value) =>
                         v-model.number="priorityForm.weight"
                         type="number"
                         min="0"
-                        class="w-20 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        placeholder="Вес"
+                        title="Чем больше число, тем выше приоритет"
+                        class="w-20 rounded-md border border-slate-300 px-3 py-2 text-center text-sm"
                     >
                     <button type="submit" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
                         Добавить
