@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
 import draggable from 'vuedraggable'
 import AppLayout from '../../Layouts/AppLayout.vue'
-import { openTask, resizeFrame } from '../../bitrix'
+import { openTask, openTaskForm, resizeFrame } from '../../bitrix'
 import CardTile from '../../Components/CardTile.vue'
 
 const props = defineProps({
@@ -76,6 +76,41 @@ watch(search, () => {
     clearTimeout(searchTimer)
     searchTimer = setTimeout(() => reload({ q: search.value || undefined }), 400)
 })
+
+// Быстрое создание задачи под первой колонкой — как в канбане Битрикса.
+const creating = ref(false)
+const newTask = useForm({ title: '' })
+
+function openQuickCreate() {
+    creating.value = true
+}
+
+function submitQuickCreate() {
+    if (!newTask.title.trim()) {
+        creating.value = false
+
+        return
+    }
+
+    newTask.post(route('app.tasks.store', props.board.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            newTask.reset()
+            // Поле остаётся открытым: задачи обычно заводят пачкой.
+        },
+        onFinish: () => resizeFrame(),
+    })
+}
+
+/**
+ * Полная форма задачи — штатная, в самом портале.
+ *
+ * Свою повторять смысла нет: в родной есть чек-листы, файлы, наблюдатели
+ * и всё остальное, чего в быстром создании быть не может.
+ */
+function openFullForm() {
+    openTaskForm()
+}
 
 function resetFilters() {
     search.value = ''
@@ -209,6 +244,14 @@ function sync() {
                     </span>
 
                     <div class="ml-auto flex flex-wrap items-center gap-1.5">
+                        <button
+                            type="button"
+                            class="rounded-sm bg-[#2fc7f7] px-3 py-1 text-xs font-semibold text-white transition hover:brightness-95"
+                            @click="openFullForm"
+                        >
+                            + Создать задачу
+                        </button>
+
                         <input
                             v-model="search"
                             type="search"
@@ -281,6 +324,35 @@ function sync() {
                                 {{ column.total }}<template v-if="column.wipLimit">/{{ column.wipLimit }}</template>
                             </span>
                         </header>
+
+                        <div v-if="index === 0" class="pt-2">
+                            <button
+                                v-if="!creating"
+                                type="button"
+                                class="w-full rounded-sm border border-dashed border-slate-300 py-1.5 text-xs font-medium text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
+                                @click="openQuickCreate"
+                            >
+                                + Быстрая задача
+                            </button>
+
+                            <form v-else @submit.prevent="submitQuickCreate">
+                                <textarea
+                                    v-model="newTask.title"
+                                    rows="2"
+                                    autofocus
+                                    placeholder="Название #тег"
+                                    class="w-full resize-none rounded-sm border border-[#2fc7f7] p-2 text-[13px] focus:outline-none"
+                                    @keydown.enter.exact.prevent="submitQuickCreate"
+                                    @keydown.esc="creating = false"
+                                />
+                                <p class="px-0.5 pt-1 text-[11px] italic text-slate-400">
+                                    Нажмите <span class="not-italic">↵ Enter</span> чтобы создать
+                                </p>
+                                <p v-if="newTask.errors.title" class="px-0.5 text-[11px] text-red-600">
+                                    {{ newTask.errors.title }}
+                                </p>
+                            </form>
+                        </div>
 
                         <draggable
                             v-model="stacks[column.id]"

@@ -58,6 +58,10 @@ class BoardController extends Controller
             ->orderBy('position')
             ->get();
 
+        // Справочник сотрудников собираем одним запросом: карточек на
+        // экране сотни, и профиль на каждую означал бы N+1.
+        $people = $this->peopleFor($cards);
+
         // Счётчики по всему дереву — они не должны зависеть от текущего
         // выбора, иначе панель слева схлопывается до одного пункта.
         $counts = $this->cardCounts($board, $all);
@@ -117,14 +121,10 @@ class BoardController extends Controller
                     'name' => $card->priorityLevel->name,
                     'color' => $card->priorityLevel->color,
                 ] : null,
-                // Одна задача может идти через несколько отделов — на
-                // карточке показываем все, иначе непонятно, почему она
-                // видна в двух разных подразделениях.
-                'departments' => $card->departments->map(fn (Department $d) => [
-                    'name' => $d->name,
-                    'color' => $d->color,
-                    'source' => $d->pivot->source,
-                ])->values(),
+                // На карточке показываем людей: исполнителя и
+                // соисполнителей. Отделы вычисляются из них же и в панели
+                // слева видны нагляднее.
+                'people' => $this->cardPeople($card, $people),
             ])->values(),
 
             'priorities' => TaskPriority::query()->orderByDesc('weight')->get()
@@ -160,6 +160,65 @@ class BoardController extends Controller
             ->map(fn (PortalUser $u) => ['id' => $u->bitrix_user_id, 'name' => $u->name])
             ->values()
             ->all();
+    }
+
+    /**
+     * Сотрудники, участвующие в задачах доски.
+     *
+     * @param  Collection<int, TaskCard>  $cards
+     * @return Collection<int, PortalUser>
+     */
+    protected function peopleFor(Collection $cards): Collection
+    {
+        $ids = $cards
+            ->flatMap(fn (TaskCard $card) => array_merge(
+                [$card->responsible_id],
+                $card->accomplice_ids ?? [],
+            ))
+            ->filter()
+            ->unique()
+            ->all();
+
+        return PortalUser::query()
+            ->whereIn('bitrix_user_id', $ids)
+            ->get()
+            ->keyBy('bitrix_user_id');
+    }
+
+    /**
+     * Участники одной задачи с их ролью.
+     *
+     * @param  Collection<int, PortalUser>  $people
+     * @return array<int, array<string, mixed>>
+     */
+    protected function cardPeople(TaskCard $card, Collection $people): array
+    {
+        $result = [];
+
+        $add = function (?int $bitrixId, string $role) use (&$result, $people) {
+            if (! $bitrixId || isset($result[$bitrixId])) {
+                return;
+            }
+
+            $user = $people->get($bitrixId);
+
+            $result[$bitrixId] = [
+                'id' => $bitrixId,
+                // Сотрудника может не быть в нашей базе, если он ещё ни
+                // разу не открывал приложение и не попадал в синхронизацию.
+                'name' => $user?->name ?? "Сотрудник #{$bitrixId}",
+                'avatar' => $user?->avatar,
+                'role' => $role,
+            ];
+        };
+
+        $add($card->responsible_id, 'responsible');
+
+        foreach ($card->accomplice_ids ?? [] as $id) {
+            $add((int) $id, 'accomplice');
+        }
+
+        return array_values($result);
     }
 
     /**

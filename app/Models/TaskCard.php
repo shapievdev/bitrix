@@ -41,6 +41,7 @@ class TaskCard extends Model
         'title',
         'title_normalized',
         'responsible_id',
+        'accomplice_ids',
         'creator_id',
         'bitrix_status',
         'priority',
@@ -55,6 +56,7 @@ class TaskCard extends Model
     {
         return [
             'fields' => 'array',
+            'accomplice_ids' => 'array',
             'pushed_user_fields' => 'array',
             'deadline' => 'datetime',
             'closed_at' => 'datetime',

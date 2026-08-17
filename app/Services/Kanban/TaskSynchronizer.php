@@ -165,6 +165,47 @@ class TaskSynchronizer
     }
 
     /**
+     * Положить только что созданную задачу на конкретную доску.
+     *
+     * Обычная синхронизация сюда не годится: новая задача не привязана к
+     * проекту и не подходит ни под один фильтр по группе, поэтому
+     * boardsFor её не найдёт и карточка просто не появится.
+     */
+    public function addTaskToBoard(Board $board, int $taskId): ?TaskCard
+    {
+        $board->loadMissing('columns', 'portal');
+
+        try {
+            $task = Bitrix24::forPortal($board->portal)->call('tasks.task.get', [
+                'taskId' => $taskId,
+                'select' => self::FIELDS,
+            ]);
+        } catch (Bitrix24Exception $e) {
+            Log::warning('Канбан: не удалось прочитать созданную задачу', [
+                'task' => $taskId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        $task = $task['task'] ?? $task;
+
+        $this->departments->warmUp($board->portal, array_merge(
+            [(int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0)],
+            $this->accomplicesOf($task),
+        ));
+
+        $card = $this->createCard($board, $task, $this->priorityMap());
+
+        if ($card) {
+            $this->userFields->push($board->portal, [$card]);
+        }
+
+        return $card;
+    }
+
+    /**
      * Снять задачу со всех досок — обработчик ONTASKDELETE.
      */
     public function forgetTask(int $taskId): void
@@ -363,6 +404,7 @@ class TaskSynchronizer
         return [
             'title' => (string) ($get('title', 'TITLE') ?? 'Без названия'),
             'responsible_id' => $this->toId($get('responsibleId', 'RESPONSIBLE_ID')),
+            'accomplice_ids' => $this->accomplicesOf($task),
             'creator_id' => $this->toId($get('createdBy', 'CREATED_BY')),
             'bitrix_status' => $this->toId($get('status', 'STATUS')),
             // Не через toId: там ноль означает «не задано», а у приоритета

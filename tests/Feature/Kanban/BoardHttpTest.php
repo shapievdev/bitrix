@@ -140,7 +140,9 @@ class BoardHttpTest extends TestCase
                 ->where('units.0.name', 'Отдел маркетинга')
                 ->has('cards', 1)
                 ->where('cards.0.title', 'Задача маркетинга')
-                ->where('cards.0.departments.0.name', 'Отдел маркетинга')
+                // На карточке теперь люди, а не отделы: отделы вычисляются
+                // из них же и видны в панели слева.
+                ->has('cards.0.people')
             );
     }
 

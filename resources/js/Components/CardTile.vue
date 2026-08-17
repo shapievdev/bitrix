@@ -36,15 +36,32 @@ function choose(priorityId) {
             {{ card.title }}
         </p>
 
-        <div v-if="card.departments?.length" class="mt-2 flex flex-wrap gap-1">
+        <!-- Исполнитель и соисполнители. Исполнитель первым и с полным
+             именем, остальные — компактно: на карточке важно кто ведёт,
+             а не полный список участников. -->
+        <div v-if="card.people?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
             <span
-                v-for="d in card.departments"
-                :key="d.name"
-                class="rounded-sm px-1.5 py-0.5 text-[11px] leading-tight"
-                :style="{ backgroundColor: d.color + '1f', color: d.color }"
-                :title="d.source === 'accomplice' ? 'Соисполнитель' : 'Исполнитель'"
+                v-for="person in card.people"
+                :key="person.id"
+                class="flex items-center gap-1 rounded-sm py-0.5 pr-1.5 text-[11px] leading-tight"
+                :class="person.role === 'responsible'
+                    ? 'bg-slate-100 pl-0.5 text-slate-700'
+                    : 'pl-0.5 text-slate-500'"
+                :title="person.role === 'responsible' ? 'Исполнитель' : 'Соисполнитель'"
             >
-                <template v-if="d.source === 'accomplice'">· </template>{{ d.name }}
+                <img
+                    v-if="person.avatar"
+                    :src="person.avatar"
+                    :alt="person.name"
+                    class="size-4 shrink-0 rounded-full object-cover"
+                >
+                <span
+                    v-else
+                    class="flex size-4 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[8px] font-semibold text-white"
+                >
+                    {{ person.name.slice(0, 1) }}
+                </span>
+                {{ person.name }}
             </span>
         </div>
 

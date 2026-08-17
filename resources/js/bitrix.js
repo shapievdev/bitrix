@@ -55,6 +55,28 @@ export function openTask(taskId) {
 }
 
 /**
+ * Открыть штатную форму создания задачи в портале.
+ *
+ * Свою полную форму повторять смысла нет: в родной есть чек-листы,
+ * файлы, наблюдатели и всё остальное, чего в быстром создании быть не
+ * может.
+ */
+export function openTaskForm() {
+    const api = bx()
+    const path = '/company/personal/user/0/tasks/task/edit/0/'
+
+    if (!api) {
+        window.open(path, '_blank')
+
+        return
+    }
+
+    api.init(() => {
+        api.openPath(path)
+    })
+}
+
+/**
  * Прямой вызов REST из браузера.
  *
  * Годится для мелочей вроде выбора сотрудника. Всё, что меняет данные,
