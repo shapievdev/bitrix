@@ -187,7 +187,8 @@ class SwimlaneTest extends TestCase
         // Десять задач — один batch на профили, а не десять запросов:
         // иначе лимит REST выбивается на первой же сотне карточек.
         $batches = collect(Http::recorded())
-            ->filter(fn ($pair) => str_contains($pair[0]->url(), '/rest/batch'))
+            ->filter(fn ($pair) => str_contains($pair[0]->url(), '/rest/batch')
+                && str_contains(implode(' ', $pair[0]['cmd'] ?? []), 'user.get'))
             ->count();
 
         $this->assertSame(1, $batches);

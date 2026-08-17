@@ -33,6 +33,12 @@ class TaskSynchronizerTest extends TestCase
                 'result' => ['tasks' => $this->tasks],
                 'total' => count($this->tasks),
             ]),
+            '*/rest/tasks.task.get*' => fn () => $this->singleTask === null
+                ? Http::response(['error' => 'TASK_NOT_FOUND'], 400)
+                : Http::response(['result' => ['task' => $this->singleTask]]),
+            // Заглушка на всё остальное обязательна: незаматченный запрос
+            // Laravel выполняет по-настоящему и уходит в реальный портал.
+            '*' => Http::response(['result' => []]),
         ]);
 
         $this->portal = Portal::create([
@@ -81,6 +87,9 @@ class TaskSynchronizerTest extends TestCase
      * @var array<int, array<string, mixed>>
      */
     protected array $tasks = [];
+
+    /** Ответ tasks.task.get; null — задачи на портале нет. */
+    protected ?array $singleTask = null;
 
     protected function fakeList(array $tasks): void
     {
@@ -192,11 +201,7 @@ class TaskSynchronizerTest extends TestCase
 
     public function test_событие_обновления_синхронизирует_одну_задачу(): void
     {
-        Http::fake([
-            '*/rest/tasks.task.get*' => Http::response([
-                'result' => ['task' => $this->task(55, 'Из события', status: 3)],
-            ]),
-        ]);
+        $this->singleTask = $this->task(55, 'Из события', status: 3);
 
         (new ProcessBitrixEvent($this->portal->id, 'ONTASKUPDATE', [
             'FIELDS_AFTER' => ['ID' => '55'],
@@ -229,9 +234,7 @@ class TaskSynchronizerTest extends TestCase
         app(TaskSynchronizer::class)->syncBoard($this->board);
 
         // Задачу удалили между отправкой события и нашим запросом.
-        Http::fake([
-            '*/rest/tasks.task.get*' => Http::response(['error' => 'TASK_NOT_FOUND'], 400),
-        ]);
+        $this->singleTask = null;
 
         (new ProcessBitrixEvent($this->portal->id, 'ONTASKUPDATE', [
             'FIELDS_AFTER' => ['ID' => '1'],

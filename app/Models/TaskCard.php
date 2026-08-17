@@ -45,6 +45,7 @@ class TaskCard extends Model
         'deadline',
         'closed_at',
         'fields',
+        'pushed_user_fields',
         'synced_at',
     ];
 
@@ -52,6 +53,7 @@ class TaskCard extends Model
     {
         return [
             'fields' => 'array',
+            'pushed_user_fields' => 'array',
             'deadline' => 'datetime',
             'closed_at' => 'datetime',
             'synced_at' => 'datetime',

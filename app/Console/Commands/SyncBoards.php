@@ -77,10 +77,11 @@ class SyncBoards extends Command
             $this->components->twoColumnDetail(
                 "  {$board->name}",
                 sprintf(
-                    '<fg=green>+%d</> <fg=yellow>~%d</> <fg=red>-%d</>',
+                    '<fg=green>+%d</> <fg=yellow>~%d</> <fg=red>-%d</> <fg=cyan>→%d</>',
                     $stats['created'],
                     $stats['updated'],
                     $stats['removed'],
+                    $stats['pushed'],
                 ),
             );
 

@@ -128,10 +128,11 @@ class BoardController extends Controller
         $stats = $synchronizer->syncBoard($board);
 
         return back()->with('success', sprintf(
-            'Синхронизация завершена: добавлено %d, обновлено %d, снято %d.',
+            'Синхронизация завершена: добавлено %d, обновлено %d, снято %d, записано в задачи %d.',
             $stats['created'],
             $stats['updated'],
             $stats['removed'],
+            $stats['pushed'],
         ));
     }
 

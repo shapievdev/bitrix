@@ -8,6 +8,7 @@ use App\Models\BoardColumn;
 use App\Models\TaskCard;
 use App\Models\TaskPriority;
 use App\Services\Bitrix24\Exceptions\Bitrix24Exception;
+use App\Services\Bitrix24\TaskUserFields;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -36,12 +37,13 @@ class TaskSynchronizer
     public function __construct(
         protected CardMover $mover,
         protected DepartmentResolver $departments,
+        protected TaskUserFields $userFields,
     ) {}
 
     /**
      * Обойти все задачи, попадающие под фильтр доски.
      *
-     * @return array{created: int, updated: int, removed: int}
+     * @return array{created: int, updated: int, removed: int, pushed: int}
      */
     public function syncBoard(Board $board): array
     {
@@ -51,7 +53,7 @@ class TaskSynchronizer
             throw new \RuntimeException("Доска «{$board->name}» без колонок — синхронизировать некуда.");
         }
 
-        $stats = ['created' => 0, 'updated' => 0, 'removed' => 0];
+        $stats = ['created' => 0, 'updated' => 0, 'removed' => 0, 'pushed' => 0];
         $seen = [];
 
         $tasks = iterator_to_array(Bitrix24::forPortal($board->portal)->list('tasks.task.list', [
@@ -86,6 +88,13 @@ class TaskSynchronizer
         }
 
         $stats['removed'] = $this->removeVanished($board, $seen);
+
+        // Возвращаем подразделение и приоритет в сами задачи портала,
+        // чтобы они были видны в штатной карточке и в фильтре списка.
+        $stats['pushed'] = $this->userFields->push(
+            $board->portal,
+            $board->cards()->with('department', 'priorityLevel')->get(),
+        );
 
         $board->forceFill(['synced_at' => now()])->save();
 
