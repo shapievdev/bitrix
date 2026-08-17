@@ -39,6 +39,7 @@ class TaskCard extends Model
         'bitrix_task_id',
         'position',
         'title',
+        'title_normalized',
         'responsible_id',
         'creator_id',
         'bitrix_status',
@@ -95,6 +96,18 @@ class TaskCard extends Model
     public function priorityLevel(): BelongsTo
     {
         return $this->belongsTo(TaskPriority::class, 'task_priority_id');
+    }
+
+    protected static function booted(): void
+    {
+        // Нормализованную копию держим в актуальном состоянии сами:
+        // складывать регистр кириллицы средствами базы нельзя, её локаль
+        // может быть какой угодно.
+        static::saving(function (TaskCard $card) {
+            if ($card->isDirty('title')) {
+                $card->title_normalized = mb_strtolower((string) $card->title);
+            }
+        });
     }
 
     /** @return BelongsTo<Board, $this> */

@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
 import draggable from 'vuedraggable'
 import AppLayout from '../../Layouts/AppLayout.vue'
@@ -14,6 +14,8 @@ const props = defineProps({
     columns: { type: Array, required: true },
     cards: { type: Array, required: true },
     priorities: { type: Array, required: true },
+    filters: { type: Object, required: true },
+    responsibles: { type: Array, required: true },
 })
 
 // Локальная раскладка по колонкам: перетаскивание отрисовывается сразу,
@@ -32,12 +34,52 @@ watch(() => props.cards, rebuild)
 
 const syncing = useForm({})
 
+const search = ref(props.filters.q ?? '')
+let searchTimer = null
+
+const hasFilters = computed(() =>
+    Boolean(props.filters.q || props.filters.priority || props.filters.responsible || props.filters.deadline),
+)
+
+/**
+ * Перезапросить доску, сохранив текущий выбор отдела и фильтры.
+ */
+function reload(overrides = {}) {
+    const query = {
+        department: props.selected.id ?? undefined,
+        q: search.value || undefined,
+        priority: props.filters.priority ?? undefined,
+        responsible: props.filters.responsible ?? undefined,
+        deadline: props.filters.deadline ?? undefined,
+        ...overrides,
+    }
+
+    // Пустые значения в адрес не пишем — иначе ссылка обрастает мусором
+    // вида ?priority=&deadline= и её неудобно передавать коллеге.
+    for (const key of Object.keys(query)) {
+        if (query[key] === undefined || query[key] === null || query[key] === '') delete query[key]
+    }
+
+    router.get(route('app.boards.show', props.board.id), query, {
+        preserveState: false,
+        preserveScroll: true,
+        onFinish: () => resizeFrame(),
+    })
+}
+
 function select(departmentId) {
-    router.get(
-        route('app.boards.show', props.board.id),
-        departmentId ? { department: departmentId } : {},
-        { preserveState: false, preserveScroll: true, onFinish: () => resizeFrame() },
-    )
+    reload({ department: departmentId ?? undefined })
+}
+
+// Ввод не должен дёргать сервер на каждую букву.
+watch(search, () => {
+    clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => reload({ q: search.value || undefined }), 400)
+})
+
+function resetFilters() {
+    search.value = ''
+    reload({ q: undefined, priority: undefined, responsible: undefined, deadline: undefined })
 }
 
 function onChange(columnId, event) {
@@ -158,19 +200,67 @@ function sync() {
 
             <!-- Канбан -->
             <section class="flex min-w-0 flex-1 flex-col bg-slate-50">
-                <header class="flex items-baseline gap-2 px-4 py-2.5">
+                <header class="flex flex-wrap items-center gap-2 px-4 py-2.5">
                     <h1 class="text-sm font-semibold">
                         {{ selected.name ?? 'Все задачи' }}
                     </h1>
                     <span class="text-xs text-slate-400">
                         {{ cards.length }} задач<span v-if="board.syncedAt"> · {{ board.syncedAt }}</span>
                     </span>
-                    <Link
-                        :href="route('app.boards.settings', board.id)"
-                        class="ml-auto text-xs text-slate-400 transition hover:text-slate-900"
-                    >
-                        Настроить
-                    </Link>
+
+                    <div class="ml-auto flex flex-wrap items-center gap-1.5">
+                        <input
+                            v-model="search"
+                            type="search"
+                            placeholder="Поиск по названию или #номеру"
+                            class="w-56 rounded-sm border border-slate-300 px-2.5 py-1 text-xs focus:border-slate-500 focus:outline-none"
+                        >
+
+                        <select
+                            class="rounded-sm border border-slate-300 px-1.5 py-1 text-xs"
+                            :value="filters.priority ?? ''"
+                            @change="reload({ priority: $event.target.value || undefined })"
+                        >
+                            <option value="">Приоритет: любой</option>
+                            <option v-for="p in priorities" :key="p.id" :value="p.id">{{ p.name }}</option>
+                        </select>
+
+                        <select
+                            class="max-w-44 rounded-sm border border-slate-300 px-1.5 py-1 text-xs"
+                            :value="filters.responsible ?? ''"
+                            @change="reload({ responsible: $event.target.value || undefined })"
+                        >
+                            <option value="">Исполнитель: любой</option>
+                            <option v-for="r in responsibles" :key="r.id" :value="r.id">{{ r.name }}</option>
+                        </select>
+
+                        <select
+                            class="rounded-sm border border-slate-300 px-1.5 py-1 text-xs"
+                            :value="filters.deadline ?? ''"
+                            @change="reload({ deadline: $event.target.value || undefined })"
+                        >
+                            <option value="">Срок: любой</option>
+                            <option value="overdue">Просроченные</option>
+                            <option value="with">Со сроком</option>
+                            <option value="without">Без срока</option>
+                        </select>
+
+                        <button
+                            v-if="hasFilters"
+                            type="button"
+                            class="rounded-sm px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-200"
+                            @click="resetFilters"
+                        >
+                            Сбросить
+                        </button>
+
+                        <Link
+                            :href="route('app.boards.settings', board.id)"
+                            class="px-1.5 text-xs text-slate-400 transition hover:text-slate-900"
+                        >
+                            Настроить
+                        </Link>
+                    </div>
                 </header>
 
                 <div class="flex flex-1 gap-4 overflow-x-auto px-4 pb-4">

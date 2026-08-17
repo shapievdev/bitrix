@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Board;
 use App\Models\BoardColumn;
 use App\Models\Department;
+use App\Models\PortalUser;
 use App\Models\TaskCard;
 use App\Models\TaskPriority;
 use App\Services\Kanban\BoardBuilder;
@@ -45,12 +46,15 @@ class BoardController extends Controller
         $selectedNode = $selected ? $all->firstWhere('id', $selected) : null;
         $scopeIds = $selectedNode?->subtreeIds($all);
 
+        $filters = $this->filters($request);
+
         $cards = $board->cards()
             ->with(['priorityLevel', 'departments'])
             ->when($scopeIds, fn ($query) => $query->whereHas(
                 'departments',
                 fn ($q) => $q->whereIn('departments.id', $scopeIds),
             ))
+            ->tap(fn ($query) => $this->applyFilters($query, $filters))
             ->orderBy('position')
             ->get();
 
@@ -68,7 +72,10 @@ class BoardController extends Controller
                 'id' => $board->id,
                 'name' => $board->name,
                 'syncedAt' => $board->synced_at?->diffForHumans(),
-                'total' => $board->cards()->count(),
+                // Счётчик «Все задачи» — тоже без завершённых.
+                'total' => $board->cards()
+                    ->whereHas('column', fn ($q) => $q->where('is_final', false))
+                    ->count(),
             ],
 
             'departments' => $primary->map(fn (Department $d) => [
@@ -126,11 +133,41 @@ class BoardController extends Controller
                     'name' => $p->name,
                     'color' => $p->color,
                 ])->values(),
+
+            'filters' => $filters,
+
+            // Исполнители только те, чьи задачи вообще есть на доске —
+            // список всех сотрудников портала здесь бесполезен.
+            'responsibles' => $this->responsibles($board),
         ]);
     }
 
     /**
-     * Сколько задач у каждого узла напрямую.
+     * Исполнители задач доски.
+     *
+     * @return array<int, array{id: int, name: string}>
+     */
+    protected function responsibles(Board $board): array
+    {
+        $ids = $board->cards()->whereNotNull('responsible_id')
+            ->distinct()
+            ->pluck('responsible_id');
+
+        return PortalUser::query()
+            ->whereIn('bitrix_user_id', $ids)
+            ->orderBy('name')
+            ->get()
+            ->map(fn (PortalUser $u) => ['id' => $u->bitrix_user_id, 'name' => $u->name])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Сколько активных задач у каждого узла.
+     *
+     * Завершённые в счётчиках не участвуют: их количество растёт вечно и
+     * быстро перестаёт что-либо значить — руководителю нужна текущая
+     * нагрузка отдела, а не архив за всё время.
      *
      * @return array<int, int>
      */
@@ -138,11 +175,60 @@ class BoardController extends Controller
     {
         return DB::table('department_task_card')
             ->join('task_cards', 'task_cards.id', '=', 'department_task_card.task_card_id')
+            ->join('board_columns', 'board_columns.id', '=', 'task_cards.board_column_id')
             ->where('task_cards.board_id', $board->id)
+            ->where('board_columns.is_final', false)
             ->groupBy('department_task_card.department_id')
             ->selectRaw('department_task_card.department_id, count(distinct task_cards.id) as total')
             ->pluck('total', 'department_id')
             ->all();
+    }
+
+    /**
+     * Разобрать параметры фильтрации.
+     *
+     * @return array<string, mixed>
+     */
+    protected function filters(Request $request): array
+    {
+        return [
+            'q' => trim((string) $request->query('q', '')),
+            'priority' => $request->integer('priority') ?: null,
+            'responsible' => $request->integer('responsible') ?: null,
+            'deadline' => in_array($request->query('deadline'), ['overdue', 'with', 'without'], true)
+                ? $request->query('deadline')
+                : null,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    protected function applyFilters($query, array $filters): void
+    {
+        $query
+            ->when($filters['q'] !== '', function ($q) use ($filters) {
+                $term = $filters['q'];
+
+                // Номер задачи ищем точным совпадением: «219» в названии
+                // и задача #219 — разные намерения, и подстрочный поиск
+                // по номеру выдал бы сотни лишних совпадений.
+                $q->where(function ($inner) use ($term) {
+                    $inner->where('title_normalized', 'like', '%'.mb_strtolower($term).'%');
+
+                    if (ctype_digit(ltrim($term, '#'))) {
+                        $inner->orWhere('bitrix_task_id', (int) ltrim($term, '#'));
+                    }
+                });
+            })
+            ->when($filters['priority'], fn ($q, $id) => $q->where('task_priority_id', $id))
+            ->when($filters['responsible'], fn ($q, $id) => $q->where('responsible_id', $id))
+            ->when($filters['deadline'] === 'overdue', fn ($q) => $q
+                ->whereNotNull('deadline')
+                ->whereNull('closed_at')
+                ->where('deadline', '<', now()))
+            ->when($filters['deadline'] === 'with', fn ($q) => $q->whereNotNull('deadline'))
+            ->when($filters['deadline'] === 'without', fn ($q) => $q->whereNull('deadline'));
     }
 
     /**
