@@ -8,7 +8,7 @@ const page = usePage()
     <div class="min-h-full">
         <nav class="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
             <Link
-                :href="route('app.boards.index')"
+                :href="route('app.home')"
                 class="text-sm font-semibold transition hover:text-slate-600"
             >
                 Задачи+
