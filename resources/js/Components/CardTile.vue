@@ -33,6 +33,18 @@ function choose(priorityId) {
             {{ card.title }}
         </p>
 
+        <div v-if="card.departments?.length" class="mt-1.5 flex flex-wrap gap-1 pl-1.5">
+            <span
+                v-for="d in card.departments"
+                :key="d.name"
+                class="rounded px-1.5 py-0.5 text-[11px] leading-tight"
+                :style="{ backgroundColor: d.color + '1f', color: d.color }"
+                :title="d.source === 'accomplice' ? 'Соисполнитель' : 'Исполнитель'"
+            >
+                <template v-if="d.source === 'accomplice'">· </template>{{ d.name }}
+            </span>
+        </div>
+
         <footer class="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1.5 text-xs">
             <span class="font-medium text-slate-400">#{{ card.taskId }}</span>
 

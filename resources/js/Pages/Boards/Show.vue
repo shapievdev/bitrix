@@ -1,67 +1,56 @@
 <script setup>
-import AppLayout from '../../Layouts/AppLayout.vue'
-import { computed, reactive, watch } from 'vue'
+import { reactive, watch } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
 import draggable from 'vuedraggable'
+import AppLayout from '../../Layouts/AppLayout.vue'
 import { openTask, resizeFrame } from '../../bitrix'
 import CardTile from '../../Components/CardTile.vue'
 
 const props = defineProps({
     board: { type: Object, required: true },
-    columns: { type: Array, required: true },
     departments: { type: Array, required: true },
+    units: { type: Array, required: true },
+    selected: { type: Object, required: true },
+    columns: { type: Array, required: true },
     cards: { type: Array, required: true },
     priorities: { type: Array, required: true },
 })
 
-// Ключ ячейки «колонка × дорожка». Дорожка «Без подразделения» — null,
-// в ключе это строка "none": null в ключе объекта превратился бы в "null"
-// и совпал бы с подразделением, у которого такое имя.
-const cellKey = (columnId, departmentId) => `${columnId}:${departmentId ?? 'none'}`
-
-// Локальная раскладка: перетаскивание должно отрисовываться мгновенно,
-// не дожидаясь ответа сервера. Сервер остаётся источником истины и при
+// Локальная раскладка по колонкам: перетаскивание отрисовывается сразу,
+// не дожидаясь ответа сервера. Источник истины остаётся на сервере и при
 // расхождении переписывает её следующим ответом.
-const cells = reactive({})
+const stacks = reactive({})
 
 function rebuild(cards) {
-    for (const key of Object.keys(cells)) delete cells[key]
-
-    for (const column of props.columns) {
-        for (const department of props.departments) {
-            cells[cellKey(column.id, department.id)] = []
-        }
-    }
-
-    for (const card of cards) {
-        const key = cellKey(card.columnId, card.departmentId)
-        if (cells[key]) cells[key].push(card)
-    }
+    for (const key of Object.keys(stacks)) delete stacks[key]
+    for (const column of props.columns) stacks[column.id] = []
+    for (const card of cards) stacks[card.columnId]?.push(card)
 }
 
 rebuild(props.cards)
 watch(() => props.cards, rebuild)
 
 const syncing = useForm({})
-const total = computed(() => props.cards.length)
 
-function onChange(columnId, departmentId, event) {
+function select(departmentId) {
+    router.get(
+        route('app.boards.show', props.board.id),
+        departmentId ? { department: departmentId } : {},
+        { preserveState: false, preserveScroll: true, onFinish: () => resizeFrame() },
+    )
+}
+
+function onChange(columnId, event) {
     const change = event.added ?? event.moved
 
     if (!change) return
 
     router.patch(
         route('app.cards.move', change.element.id),
-        {
-            column_id: columnId,
-            department_id: departmentId,
-            position: change.newIndex,
-        },
+        { column_id: columnId, position: change.newIndex },
         {
             preserveScroll: true,
             preserveState: true,
-            // Ответ вернёт актуальную раскладку — если сервер решил иначе
-            // (карточку уже двигал коллега), локальная копия поправится.
             onError: () => router.reload({ only: ['cards'] }),
         },
     )
@@ -75,10 +64,6 @@ function setPriority(card, priorityId) {
     )
 }
 
-function laneCount(departmentId) {
-    return props.cards.filter((c) => c.departmentId === departmentId).length
-}
-
 function sync() {
     syncing.post(route('app.boards.sync', props.board.id), {
         preserveScroll: true,
@@ -89,76 +74,126 @@ function sync() {
 
 <template>
     <AppLayout>
-        <div class="p-4">
-            <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-semibold">{{ board.name }}</h1>
-                    <p class="mt-0.5 text-xs text-slate-500">
-                        {{ total }} задач · {{ departments.length - 1 }} подразделений
-                        <span v-if="board.syncedAt"> · обновлено {{ board.syncedAt }}</span>
-                    </p>
+        <div class="flex h-[calc(100vh-3rem)] min-h-125">
+            <!-- Департаменты -->
+            <aside class="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
+                <header class="flex items-center justify-between px-3 py-2.5">
+                    <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Департаменты
+                    </h2>
+                    <button
+                        type="button"
+                        class="text-xs text-slate-400 transition hover:text-slate-900 disabled:opacity-40"
+                        :disabled="syncing.processing"
+                        title="Обновить задачи из Битрикс24"
+                        @click="sync"
+                    >
+                        {{ syncing.processing ? '…' : '↻' }}
+                    </button>
+                </header>
+
+                <div class="flex-1 overflow-y-auto pb-2">
+                    <button
+                        type="button"
+                        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition"
+                        :class="!selected.id ? 'bg-slate-900 text-white' : 'hover:bg-slate-100'"
+                        @click="select(null)"
+                    >
+                        <span class="flex-1">Все задачи</span>
+                        <span class="text-xs tabular-nums opacity-60">{{ board.total }}</span>
+                    </button>
+
+                    <button
+                        v-for="d in departments"
+                        :key="d.id"
+                        type="button"
+                        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition"
+                        :class="selected.departmentId === d.id ? 'bg-slate-100 font-medium' : 'hover:bg-slate-50'"
+                        @click="select(d.id)"
+                    >
+                        <span class="size-2 shrink-0 rounded-full" :style="{ backgroundColor: d.color }" />
+                        <span class="flex-1 leading-tight">{{ d.name }}</span>
+                        <span class="text-xs tabular-nums text-slate-400">{{ d.count }}</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Отделы выбранного департамента -->
+            <aside class="flex w-52 shrink-0 flex-col border-r border-slate-200 bg-slate-50/60">
+                <header class="px-3 py-2.5">
+                    <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Отделы
+                    </h2>
+                </header>
+
+                <div v-if="units.length" class="flex-1 overflow-y-auto pb-2">
+                    <button
+                        v-if="selected.departmentId"
+                        type="button"
+                        class="w-full px-3 py-1.5 text-left text-sm transition"
+                        :class="selected.id === selected.departmentId ? 'bg-slate-200 font-medium' : 'hover:bg-slate-100'"
+                        @click="select(selected.departmentId)"
+                    >
+                        Весь департамент
+                    </button>
+
+                    <button
+                        v-for="u in units"
+                        :key="u.id"
+                        type="button"
+                        class="flex w-full items-center gap-2 py-1.5 pr-3 text-left text-sm transition"
+                        :class="selected.id === u.id ? 'bg-slate-200 font-medium' : 'hover:bg-slate-100'"
+                        :style="{ paddingLeft: `${12 + u.depth * 12}px` }"
+                        @click="select(u.id)"
+                    >
+                        <span class="flex-1 leading-tight">{{ u.name }}</span>
+                        <span class="text-xs tabular-nums text-slate-400">{{ u.count }}</span>
+                    </button>
                 </div>
 
-                <div class="flex items-center gap-2">
+                <p v-else class="px-3 text-xs leading-relaxed text-slate-400">
+                    Выберите департамент слева — здесь появятся его отделы.
+                </p>
+            </aside>
+
+            <!-- Канбан -->
+            <section class="flex min-w-0 flex-1 flex-col">
+                <header class="flex items-baseline gap-2 px-4 py-2.5">
+                    <h1 class="text-sm font-semibold">
+                        {{ selected.name ?? 'Все задачи' }}
+                    </h1>
+                    <span class="text-xs text-slate-400">
+                        {{ cards.length }} задач<span v-if="board.syncedAt"> · {{ board.syncedAt }}</span>
+                    </span>
                     <Link
                         :href="route('app.boards.settings', board.id)"
-                        class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium transition hover:bg-slate-100"
+                        class="ml-auto text-xs text-slate-400 transition hover:text-slate-900"
                     >
                         Настроить
                     </Link>
-                    <button
-                        type="button"
-                        class="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
-                        :disabled="syncing.processing"
-                        @click="sync"
-                    >
-                        {{ syncing.processing ? 'Синхронизация…' : 'Обновить из Битрикс24' }}
-                    </button>
-                </div>
-            </header>
+                </header>
 
-            <div class="overflow-x-auto pb-4">
-                <div class="min-w-max">
-                    <!-- Шапка колонок: одна на всю доску, иначе статусы
-                         повторялись бы над каждой дорожкой. -->
-                    <div class="sticky top-0 z-10 flex gap-3 bg-slate-50 pb-2">
-                        <div class="w-40 shrink-0" />
-                        <div
-                            v-for="column in columns"
-                            :key="column.id"
-                            class="flex w-64 shrink-0 items-center gap-2 rounded-md bg-white px-3 py-2 ring-1 ring-slate-200"
-                        >
+                <div class="flex flex-1 gap-3 overflow-x-auto px-4 pb-4">
+                    <div
+                        v-for="column in columns"
+                        :key="column.id"
+                        class="flex w-64 shrink-0 flex-col rounded-lg bg-slate-100"
+                    >
+                        <header class="flex items-center gap-2 px-3 py-2">
                             <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: column.color }" />
-                            <h2 class="truncate text-sm font-semibold">{{ column.name }}</h2>
+                            <h3 class="truncate text-sm font-semibold">{{ column.name }}</h3>
                             <span class="ml-auto text-xs tabular-nums text-slate-400">
                                 {{ column.total }}<template v-if="column.wipLimit">/{{ column.wipLimit }}</template>
                             </span>
-                        </div>
-                    </div>
-
-                    <!-- Дорожки подразделений -->
-                    <div
-                        v-for="department in departments"
-                        :key="department.id ?? 'none'"
-                        class="flex gap-3 border-t border-slate-200 py-2"
-                    >
-                        <div class="w-40 shrink-0 pt-1">
-                            <div class="flex items-center gap-2">
-                                <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: department.color }" />
-                                <span class="truncate text-sm font-medium">{{ department.name }}</span>
-                            </div>
-                            <span class="ml-4.5 text-xs text-slate-400">{{ laneCount(department.id) }} задач</span>
-                        </div>
+                        </header>
 
                         <draggable
-                            v-for="column in columns"
-                            :key="column.id"
-                            v-model="cells[cellKey(column.id, department.id)]"
+                            v-model="stacks[column.id]"
                             :group="`board-${board.id}`"
                             item-key="id"
-                            class="flex min-h-16 w-64 shrink-0 flex-col gap-2 rounded-md bg-slate-100 p-1.5"
+                            class="flex flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2"
                             ghost-class="opacity-40"
-                            @change="onChange(column.id, department.id, $event)"
+                            @change="onChange(column.id, $event)"
                         >
                             <template #item="{ element }">
                                 <CardTile
@@ -171,7 +206,7 @@ function sync() {
                         </draggable>
                     </div>
                 </div>
-            </div>
+            </section>
         </div>
     </AppLayout>
 </template>

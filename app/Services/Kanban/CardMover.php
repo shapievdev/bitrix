@@ -21,19 +21,18 @@ use Illuminate\Support\Facades\Log;
 class CardMover
 {
     /**
-     * Переместить карточку в ячейку «колонка × дорожка» на заданную позицию.
+     * Переместить карточку в колонку на заданную позицию.
      *
-     * Ячейка задаётся всегда целиком: на доске с дорожками одна колонка —
-     * это несколько независимых стопок карточек, и порядок в каждой свой.
+     * Отделы карточки на порядок не влияют: задача может принадлежать
+     * сразу нескольким, и раскладывать её на независимые стопки было бы
+     * нечем — она одна.
      *
-     * @param  ?int  $departmentId  Дорожка подразделения; null — «Без подразделения».
-     * @param  ?int  $position  Позиция в ячейке, начиная с 0. null — в конец.
+     * @param  ?int  $position  Позиция в колонке, начиная с 0. null — в конец.
      * @param  bool  $pushToBitrix  Отправить ли новый статус на портал.
      */
     public function move(
         TaskCard $card,
         BoardColumn $target,
-        ?int $departmentId = null,
         ?int $position = null,
         ?PortalUser $actor = null,
         bool $pushToBitrix = true,
@@ -43,27 +42,15 @@ class CardMover
         }
 
         $source = $card->column;
-        $sourceDepartmentId = $card->department_id;
         $enteredAt = $card->enteredColumnAt();
 
-        DB::transaction(function () use (
-            $card, $target, $departmentId, $position, $actor, $source, $sourceDepartmentId, $enteredAt
-        ) {
-            // Блокируем карточки обеих ячеек: два одновременных
+        DB::transaction(function () use ($card, $target, $position, $actor, $source, $enteredAt) {
+            // Блокируем карточки обеих колонок: два одновременных
             // перетаскивания иначе выдадут двум карточкам одну позицию.
-            $this->lockCells([
-                [$source?->id, $sourceDepartmentId],
-                [$target->id, $departmentId],
-            ]);
+            $this->lockColumns(array_unique(array_filter([$source?->id, $target->id])));
 
             $this->detach($card);
-            $this->insert($card, $target, $departmentId, $position);
-
-            // Дорожку сменили руками — автоподстановка по отделу
-            // ответственного больше не должна её перебивать.
-            if ($actor !== null && $departmentId !== $sourceDepartmentId) {
-                $card->forceFill(['department_locked' => true])->save();
-            }
+            $this->insert($card, $target, $position);
 
             // Перемещение внутри колонки историей не считаем — иначе отчёт
             // о времени на этапе будет обнуляться при любой сортировке.
@@ -111,10 +98,9 @@ class CardMover
             return $card;
         }
 
-        // Дорожку сохраняем: сменился статус, а не подразделение.
         // pushToBitrix отключён намеренно: статус пришёл оттуда, отправлять
         // его обратно — прямой путь к бесконечному циклу событий.
-        return $this->move($card, $target, $card->department_id, pushToBitrix: false);
+        return $this->move($card, $target, pushToBitrix: false);
     }
 
     /**
@@ -176,28 +162,12 @@ class CardMover
     }
 
     /**
-     * Ограничить выборку одной ячейкой «колонка × дорожка».
-     *
-     * Отдельным методом, потому что department_id бывает null, а
-     * `where('department_id', null)` в SQL не совпадает ни с чем.
-     */
-    protected function inCell($query, ?int $columnId, ?int $departmentId)
-    {
-        return $query
-            ->where('board_column_id', $columnId)
-            ->when(
-                $departmentId === null,
-                fn ($q) => $q->whereNull('department_id'),
-                fn ($q) => $q->where('department_id', $departmentId),
-            );
-    }
-
-    /**
-     * Закрыть дыру, оставшуюся от карточки в прежней ячейке.
+     * Закрыть дыру, оставшуюся от карточки в прежней колонке.
      */
     protected function detach(TaskCard $card): void
     {
-        $this->inCell(TaskCard::query(), $card->board_column_id, $card->department_id)
+        TaskCard::query()
+            ->where('board_column_id', $card->board_column_id)
             ->where('position', '>', $card->position)
             ->decrement('position');
     }
@@ -205,41 +175,39 @@ class CardMover
     /**
      * Раздвинуть карточки и вписать нашу.
      */
-    protected function insert(TaskCard $card, BoardColumn $target, ?int $departmentId, ?int $position): void
+    protected function insert(TaskCard $card, BoardColumn $target, ?int $position): void
     {
-        $count = $this->inCell(TaskCard::query(), $target->id, $departmentId)
+        $count = TaskCard::query()
+            ->where('board_column_id', $target->id)
             ->where('id', '!=', $card->id)
             ->count();
 
-        $position = $position === null
-            ? $count
-            : max(0, min($position, $count));
+        $position = $position === null ? $count : max(0, min($position, $count));
 
-        $this->inCell(TaskCard::query(), $target->id, $departmentId)
+        TaskCard::query()
+            ->where('board_column_id', $target->id)
             ->where('id', '!=', $card->id)
             ->where('position', '>=', $position)
             ->increment('position');
 
         $card->forceFill([
             'board_column_id' => $target->id,
-            'department_id' => $departmentId,
             'position' => $position,
         ])->save();
     }
 
     /**
-     * @param  array<int, array{0: ?int, 1: ?int}>  $cells  Пары «колонка, дорожка»
+     * @param  array<int>  $columnIds
      */
-    protected function lockCells(array $cells): void
+    protected function lockColumns(array $columnIds): void
     {
-        foreach ($cells as [$columnId, $departmentId]) {
-            if ($columnId === null) {
-                continue;
-            }
-
-            $this->inCell(TaskCard::query(), $columnId, $departmentId)
-                ->lockForUpdate()
-                ->pluck('id');
+        if ($columnIds === []) {
+            return;
         }
+
+        TaskCard::query()
+            ->whereIn('board_column_id', $columnIds)
+            ->lockForUpdate()
+            ->pluck('id');
     }
 }

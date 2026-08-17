@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\AppController;
 use App\Http\Controllers\Bitrix24\EntryController;
 use App\Http\Controllers\Bitrix24\EventController;
 use App\Http\Controllers\Bitrix24\InstallController;
@@ -53,10 +52,8 @@ Route::middleware([ResolveBitrixPortal::class, BitrixFrameHeaders::class])
     ->prefix('app')
     ->name('app.')
     ->group(function () {
-        Route::get('/', [AppController::class, 'home'])->name('home');
+        Route::get('/', [BoardController::class, 'current'])->name('home');
 
-        Route::get('boards', [BoardController::class, 'index'])->name('boards.index');
-        Route::post('boards', [BoardController::class, 'store'])->name('boards.store');
         Route::get('boards/{board}', [BoardController::class, 'show'])->name('boards.show');
         Route::delete('boards/{board}', [BoardController::class, 'destroy'])->name('boards.destroy');
         Route::post('boards/{board}/sync', [BoardController::class, 'sync'])->name('boards.sync');

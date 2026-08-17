@@ -99,9 +99,6 @@ class TaskCardController extends Controller
             $mover->move(
                 card: $card,
                 target: $column,
-                departmentId: array_key_exists('department_id', $validated)
-                    ? $validated['department_id']
-                    : $card->department_id,
                 actor: PortalContext::user(),
             );
         }

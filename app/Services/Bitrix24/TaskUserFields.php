@@ -89,10 +89,13 @@ class TaskUserFields
      */
     public function valuesFor(TaskCard $card): array
     {
-        $card->loadMissing('department', 'priorityLevel');
+        $card->loadMissing('departments', 'priorityLevel');
 
+        // Перечисляем все отделы задачи, а не только отдел исполнителя:
+        // в штатном фильтре сотрудник должен находить и те задачи, где он
+        // соисполнитель, иначе половина работы отдела не видна.
         $values = [
-            'department' => $card->department?->name ?? '',
+            'department' => $card->departments->pluck('name')->sort()->implode(', '),
             'priority' => $card->priorityLevel?->name ?? '',
         ];
 

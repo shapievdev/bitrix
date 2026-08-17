@@ -12,52 +12,82 @@ use App\Services\Kanban\TaskSynchronizer;
 use App\Support\PortalContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class BoardController extends Controller
 {
-    public function index(): Response
+    /**
+     * Единственная доска портала, создавая её при первом входе.
+     *
+     * Приложение должно открываться сразу на канбане: экран со списком
+     * досок между входом и работой — лишний шаг.
+     */
+    public function current(BoardBuilder $builder): RedirectResponse
     {
-        // Глобальный скоуп уже ограничил выборку текущим порталом —
-        // фильтровать вручную не нужно и нельзя забыть.
-        $boards = Board::query()
-            ->withCount('cards')
-            ->orderBy('name')
-            ->get()
-            ->map(fn (Board $board) => [
-                'id' => $board->id,
-                'name' => $board->name,
-                'description' => $board->description,
-                'cardsCount' => $board->cards_count,
-                'syncedAt' => $board->synced_at?->diffForHumans(),
-            ]);
+        $board = Board::query()->orderBy('id')->first()
+            ?? $builder->create('Задачи компании', author: PortalContext::user());
 
-        return Inertia::render('Boards/Index', ['boards' => $boards]);
+        return redirect()->route('app.boards.show', $board);
     }
 
-    public function show(Board $board): Response
+    public function show(Request $request, Board $board): Response
     {
         $board->load('columns');
 
+        $all = Department::query()->orderBy('name')->get();
+
+        // Выбранный узел определяет, что показывать в канбане: сам
+        // департамент, конкретный отдел или всё сразу.
+        $selected = $request->integer('department') ?: null;
+        $selectedNode = $selected ? $all->firstWhere('id', $selected) : null;
+        $scopeIds = $selectedNode?->subtreeIds($all);
+
         $cards = $board->cards()
-            ->with('priorityLevel')
+            ->with(['priorityLevel', 'departments'])
+            ->when($scopeIds, fn ($query) => $query->whereHas(
+                'departments',
+                fn ($q) => $q->whereIn('departments.id', $scopeIds),
+            ))
             ->orderBy('position')
             ->get();
 
-        // Дорожки: подразделения плюс обязательная «Без подразделения».
-        // Задачи, чей отдел определить не удалось, прятать нельзя —
-        // именно они и теряются на практике.
-        $departments = Department::query()->orderBy('position')->get()
-            ->map(fn (Department $d) => ['id' => $d->id, 'name' => $d->name, 'color' => $d->color])
-            ->push(['id' => null, 'name' => 'Без подразделения', 'color' => '#cbd5e1'])
-            ->values();
+        // Счётчики по всему дереву — они не должны зависеть от текущего
+        // выбора, иначе панель слева схлопывается до одного пункта.
+        $counts = $this->cardCounts($board, $all);
+
+        $primary = $all->where('is_primary', true)->values();
+        $parentForUnits = $selectedNode?->is_primary
+            ? $selectedNode
+            : ($selectedNode?->parent_id ? $all->firstWhere('id', $selectedNode->parent_id) : null);
 
         return Inertia::render('Boards/Show', [
             'board' => [
                 'id' => $board->id,
                 'name' => $board->name,
                 'syncedAt' => $board->synced_at?->diffForHumans(),
+                'total' => $board->cards()->count(),
+            ],
+
+            'departments' => $primary->map(fn (Department $d) => [
+                'id' => $d->id,
+                'name' => $d->name,
+                'color' => $d->color,
+                'count' => $this->subtreeCount($d, $all, $counts),
+            ])->values(),
+
+            // Отделы выбранного департамента: прямые дети и их потомки,
+            // с отступом, чтобы вложенность была видна.
+            'units' => $parentForUnits
+                ? $this->flattenUnits($parentForUnits, $all, $counts)
+                : [],
+
+            'selected' => [
+                'id' => $selectedNode?->id,
+                'name' => $selectedNode?->name,
+                'departmentId' => $parentForUnits?->id,
             ],
 
             'columns' => $board->columns->map(fn (BoardColumn $column) => [
@@ -65,29 +95,29 @@ class BoardController extends Controller
                 'name' => $column->name,
                 'color' => $column->color,
                 'wipLimit' => $column->wip_limit,
-                'isFinal' => $column->is_final,
                 'total' => $cards->where('board_column_id', $column->id)->count(),
             ])->values(),
 
-            'departments' => $departments,
-
-            // Карточки отдаём плоским списком с координатами ячейки:
-            // раскладывать их вложенными массивами по колонкам и дорожкам —
-            // это пересборка всей структуры при каждом перетаскивании.
             'cards' => $cards->map(fn (TaskCard $card) => [
                 'id' => $card->id,
                 'columnId' => $card->board_column_id,
-                'departmentId' => $card->department_id,
                 'position' => $card->position,
                 'taskId' => $card->bitrix_task_id,
                 'title' => $card->title,
-                'responsibleId' => $card->responsible_id,
                 'deadline' => $card->deadline?->format('d.m.Y'),
                 'isOverdue' => $card->isOverdue(),
                 'priority' => $card->priorityLevel ? [
                     'name' => $card->priorityLevel->name,
                     'color' => $card->priorityLevel->color,
                 ] : null,
+                // Одна задача может идти через несколько отделов — на
+                // карточке показываем все, иначе непонятно, почему она
+                // видна в двух разных подразделениях.
+                'departments' => $card->departments->map(fn (Department $d) => [
+                    'name' => $d->name,
+                    'color' => $d->color,
+                    'source' => $d->pivot->source,
+                ])->values(),
             ])->values(),
 
             'priorities' => TaskPriority::query()->orderByDesc('weight')->get()
@@ -99,36 +129,67 @@ class BoardController extends Controller
         ]);
     }
 
-    public function store(Request $request, BoardBuilder $builder): RedirectResponse
+    /**
+     * Сколько задач у каждого узла напрямую.
+     *
+     * @return array<int, int>
+     */
+    protected function cardCounts(Board $board, Collection $all): array
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:120'],
-            'bitrix_group_id' => ['nullable', 'integer', 'min:1'],
-        ]);
-
-        $board = $builder->create(
-            name: $validated['name'],
-            groupId: $validated['bitrix_group_id'] ?? null,
-            author: PortalContext::user(),
-        );
-
-        return redirect()
-            ->route('app.boards.show', $board)
-            ->with('success', 'Доска создана. Запустите синхронизацию, чтобы подтянуть задачи.');
+        return DB::table('department_task_card')
+            ->join('task_cards', 'task_cards.id', '=', 'department_task_card.task_card_id')
+            ->where('task_cards.board_id', $board->id)
+            ->groupBy('department_task_card.department_id')
+            ->selectRaw('department_task_card.department_id, count(distinct task_cards.id) as total')
+            ->pluck('total', 'department_id')
+            ->all();
     }
 
     /**
-     * Полная синхронизация по кнопке.
-     *
-     * Держим синхронной: пользователь нажал и ждёт результат, а доска на
-     * несколько сотен задач укладывается в один-два батча.
+     * @param  array<int, int>  $counts
      */
+    protected function subtreeCount(Department $node, Collection $all, array $counts): int
+    {
+        $total = 0;
+
+        foreach ($node->subtreeIds($all) as $id) {
+            $total += $counts[$id] ?? 0;
+        }
+
+        return $total;
+    }
+
+    /**
+     * Плоский список отделов департамента с уровнем вложенности.
+     *
+     * @param  array<int, int>  $counts
+     * @return array<int, array<string, mixed>>
+     */
+    protected function flattenUnits(Department $parent, Collection $all, array $counts, int $depth = 0): array
+    {
+        $result = [];
+
+        foreach ($all->where('parent_id', $parent->id)->sortBy('name') as $child) {
+            $result[] = [
+                'id' => $child->id,
+                'name' => $child->name,
+                'color' => $child->color,
+                'depth' => $depth,
+                'count' => $this->subtreeCount($child, $all, $counts),
+            ];
+
+            $result = array_merge($result, $this->flattenUnits($child, $all, $counts, $depth + 1));
+        }
+
+        return $result;
+    }
+
     public function sync(Board $board, TaskSynchronizer $synchronizer): RedirectResponse
     {
         $stats = $synchronizer->syncBoard($board);
 
         return back()->with('success', sprintf(
-            'Синхронизация завершена: добавлено %d, обновлено %d, снято %d, записано в задачи %d.',
+            'Обновлено: добавлено %d, изменено %d, снято %d, записано в задачи %d.',
             $stats['created'],
             $stats['updated'],
             $stats['removed'],
@@ -141,7 +202,7 @@ class BoardController extends Controller
         $board->delete();
 
         return redirect()
-            ->route('app.boards.index')
+            ->route('app.home')
             ->with('success', 'Доска удалена. Задачи в Битрикс24 не затронуты.');
     }
 }

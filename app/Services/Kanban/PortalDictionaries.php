@@ -10,17 +10,31 @@ use App\Services\Bitrix24\Exceptions\Bitrix24Exception;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Справочники портала: подразделения и приоритеты.
- *
- * Заводятся один раз при первой доске. Пустой экран с предложением
- * «сначала настройте справочники» — верный способ, чтобы приложением
- * никто не воспользовался.
+ * Справочники портала: оргструктура и приоритеты.
  */
 class PortalDictionaries
 {
     /**
-     * Создать наборы по умолчанию, если их ещё нет.
+     * Департаменты верхнего уровня навигации.
+     *
+     * В дереве портала они лежат на разной глубине: большинство под
+     * «Исполнительным директором», а Служба безопасности и Тендерный
+     * отдел — прямо под корнем. Вычислить их по родителю нельзя, поэтому
+     * перечисляем по названию.
      */
+    protected const PRIMARY = [
+        'Коммерческий департамент',
+        'Отдел Категорийного менеджмента',
+        'Операционный департамент',
+        'Финансовый департамент',
+        'HR департамент',
+        'IT Отдел',
+        'Административно-хозяйственная часть',
+        'Гипермаркет',
+        'Тендерный отдел',
+        'Служба безопасности',
+    ];
+
     public function ensure(Portal $portal): void
     {
         if (TaskPriority::query()->count() === 0) {
@@ -37,27 +51,23 @@ class PortalDictionaries
         }
 
         if (Department::query()->count() === 0) {
-            $this->seedDepartments($portal);
+            $this->importFromBitrix($portal);
         }
     }
 
     /**
-     * Подтянуть подразделения из оргструктуры портала.
+     * Забрать оргструктуру портала вместе с иерархией.
      *
-     * Названия отделов у клиента уже есть — переписывать их руками
-     * бессмысленно. Связь по bitrix_department_id заодно включает
-     * автоподстановку дорожки по ответственному.
+     * Импорт идемпотентный: узлы находятся по bitrix_department_id, так
+     * что повторный запуск подхватывает новые отделы и не плодит копии.
      *
-     * @return int Сколько подразделений добавлено.
+     * @return int Сколько узлов добавлено.
      */
     public function importFromBitrix(Portal $portal): int
     {
         try {
-            $departments = Bitrix24::forPortal($portal)->call('department.get');
+            $raw = Bitrix24::forPortal($portal)->call('department.get');
         } catch (Bitrix24Exception $e) {
-            // Метод department.get требует права department, которых у
-            // приложения может не быть. Это не повод ломать настройку —
-            // подразделения всегда можно завести руками.
             Log::info('Канбан: оргструктура недоступна', [
                 'portal' => $portal->domain,
                 'error' => $e->getMessage(),
@@ -66,27 +76,55 @@ class PortalDictionaries
             return 0;
         }
 
-        if (! is_array($departments)) {
+        if (! is_array($raw) || $raw === []) {
             return 0;
         }
 
-        $existing = Department::query()->pluck('bitrix_department_id')->filter()->all();
-        $position = (int) Department::query()->max('position');
+        $added = $this->upsertNodes($portal, $raw);
+        $this->linkParents($portal);
+        $this->markPrimary();
+
+        return $added;
+    }
+
+    /**
+     * Создать или обновить узлы по данным портала.
+     *
+     * @param  array<int, array<string, mixed>>  $raw
+     */
+    protected function upsertNodes(Portal $portal, array $raw): int
+    {
+        $existing = Department::query()
+            ->whereNotNull('bitrix_department_id')
+            ->get()
+            ->keyBy('bitrix_department_id');
+
+        $position = 0;
         $added = 0;
 
-        foreach ($departments as $department) {
-            $bitrixId = (int) ($department['ID'] ?? 0);
+        foreach ($raw as $node) {
+            $bitrixId = (int) ($node['ID'] ?? 0);
 
-            if ($bitrixId === 0 || in_array($bitrixId, $existing, true)) {
+            if ($bitrixId === 0) {
                 continue;
             }
 
-            Department::create([
+            $attributes = [
+                'name' => trim((string) ($node['NAME'] ?? "Отдел #{$bitrixId}")),
+                'bitrix_parent_id' => ($node['PARENT'] ?? null) ? (int) $node['PARENT'] : null,
+                'position' => $position++,
+            ];
+
+            if ($current = $existing->get($bitrixId)) {
+                $current->update($attributes);
+
+                continue;
+            }
+
+            Department::create($attributes + [
                 'portal_id' => $portal->id,
-                'name' => $department['NAME'] ?? "Отдел #{$bitrixId}",
-                'color' => $this->paletteColor($added),
-                'position' => ++$position,
                 'bitrix_department_id' => $bitrixId,
+                'color' => $this->paletteColor($added),
             ]);
 
             $added++;
@@ -96,35 +134,49 @@ class PortalDictionaries
     }
 
     /**
-     * Стартовый набор подразделений.
+     * Проставить родство внутри нашей таблицы.
      *
-     * Сначала пробуем оргструктуру портала; если прав на неё нет —
-     * кладём типовые отделы, которые пользователь переименует под себя.
+     * Отдельным проходом: на момент создания узла его родитель может быть
+     * ещё не создан, и связать их сразу нельзя.
      */
-    protected function seedDepartments(Portal $portal): void
+    protected function linkParents(Portal $portal): void
     {
-        if ($this->importFromBitrix($portal) > 0) {
-            Department::query()->orderBy('position')->first()?->update(['is_default' => true]);
+        $byBitrixId = Department::query()
+            ->whereNotNull('bitrix_department_id')
+            ->get()
+            ->keyBy('bitrix_department_id');
 
-            return;
+        foreach ($byBitrixId as $department) {
+            $parent = $department->bitrix_parent_id
+                ? $byBitrixId->get($department->bitrix_parent_id)
+                : null;
+
+            if ($department->parent_id !== $parent?->id) {
+                $department->forceFill(['parent_id' => $parent?->id])->save();
+            }
         }
+    }
 
-        $defaults = ['Коммерческий отдел', 'Операционный отдел', 'Производство', 'Администрация'];
+    /**
+     * Отметить департаменты верхнего уровня навигации.
+     */
+    protected function markPrimary(): void
+    {
+        $normalize = fn (string $name) => mb_strtolower(preg_replace('/\s+/u', ' ', trim($name)));
+        $wanted = array_map($normalize, self::PRIMARY);
 
-        foreach ($defaults as $position => $name) {
-            Department::create([
-                'portal_id' => $portal->id,
-                'name' => $name,
-                'color' => $this->paletteColor($position),
-                'position' => $position,
-                'is_default' => $position === 0,
-            ]);
+        foreach (Department::query()->get() as $department) {
+            $isPrimary = in_array($normalize($department->name), $wanted, true);
+
+            if ($department->is_primary !== $isPrimary) {
+                $department->forceFill(['is_primary' => $isPrimary])->save();
+            }
         }
     }
 
     protected function paletteColor(int $index): string
     {
-        $palette = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#06b6d4', '#f97316'];
+        $palette = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#06b6d4', '#f97316', '#84cc16'];
 
         return $palette[$index % count($palette)];
     }

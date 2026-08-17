@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\BoardColumn;
-use App\Models\Department;
 use App\Models\TaskCard;
 use App\Models\TaskPriority;
 use App\Services\Bitrix24\TaskUserFields;
@@ -22,7 +21,6 @@ class CardController extends Controller
     ): RedirectResponse {
         $validated = $request->validate([
             'column_id' => ['required', 'integer'],
-            'department_id' => ['nullable', 'integer'],
             'position' => ['nullable', 'integer', 'min:0'],
         ]);
 
@@ -32,17 +30,9 @@ class CardController extends Controller
             ->where('board_id', $card->board_id)
             ->findOrFail($validated['column_id']);
 
-        // null — дорожка «Без подразделения», это допустимая ячейка.
-        $departmentId = $validated['department_id'] ?? null;
-
-        if ($departmentId !== null) {
-            $departmentId = Department::query()->findOrFail($departmentId)->id;
-        }
-
         $mover->move(
             card: $card,
             target: $column,
-            departmentId: $departmentId,
             position: $validated['position'] ?? null,
             actor: PortalContext::user(),
         );

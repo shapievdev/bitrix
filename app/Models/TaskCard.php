@@ -7,6 +7,7 @@ use Database\Factories\TaskCardFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 
@@ -64,10 +65,30 @@ class TaskCard extends Model
         ];
     }
 
-    /** @return BelongsTo<Department, $this> */
+    /**
+     * Основной отдел — тот, где работает исполнитель.
+     *
+     * @return BelongsTo<Department, $this>
+     */
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);
+    }
+
+    /**
+     * Все отделы задачи: исполнителя и всех соисполнителей.
+     *
+     * Одна задача часто идёт через несколько отделов, и приписывать её
+     * только исполнителю — значит спрятать её от тех, кто в ней реально
+     * участвует.
+     *
+     * @return BelongsToMany<Department, $this>
+     */
+    public function departments(): BelongsToMany
+    {
+        return $this->belongsToMany(Department::class, 'department_task_card')
+            ->withPivot('source')
+            ->withTimestamps();
     }
 
     /** @return BelongsTo<TaskPriority, $this> */

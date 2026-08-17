@@ -11,42 +11,33 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Определение подразделения задачи по её ответственному.
+ * Определение отделов задачи по её участникам.
  *
- * Отдел сотрудника лежит в оргструктуре портала (UF_DEPARTMENT), а наши
- * подразделения связаны с ним через bitrix_department_id. Сопоставление
- * держим в памяти на время синхронизации: доска на пару сотен задач
- * иначе выбьет лимит REST на одних только запросах профилей.
+ * Задача принадлежит отделу исполнителя и отделам всех соисполнителей —
+ * то есть сразу нескольким. Приписывать её только исполнителю значит
+ * спрятать её от тех, кто в ней реально участвует.
  */
 class DepartmentResolver
 {
-    /** @var Collection<int, Department>|null Отдел Битрикса => наше подразделение */
+    /** @var Collection<int, Department>|null Отдел Битрикса => наш узел */
     protected ?Collection $byBitrixId = null;
 
-    protected ?Department $fallback = null;
-
-    /** @var array<int, PortalUser|null> Кэш сотрудников по их ID в Битриксе */
+    /** @var array<int, PortalUser> Кэш сотрудников по их ID в Битриксе */
     protected array $users = [];
 
     /**
      * Подготовить сопоставление и подтянуть недостающих сотрудников.
      *
-     * Вызывается один раз перед обходом задач: все нужные профили
-     * забираются пачкой, а не по одному на карточку.
-     *
-     * @param  array<int>  $responsibleIds
+     * @param  array<int>  $bitrixUserIds  Все исполнители и соисполнители обхода
      */
-    public function warmUp(Portal $portal, array $responsibleIds): void
+    public function warmUp(Portal $portal, array $bitrixUserIds): void
     {
-        $departments = Department::query()->get();
-
-        $this->byBitrixId = $departments
-            ->filter(fn (Department $d) => $d->bitrix_department_id !== null)
+        $this->byBitrixId = Department::query()
+            ->whereNotNull('bitrix_department_id')
+            ->get()
             ->keyBy('bitrix_department_id');
 
-        $this->fallback = $departments->firstWhere('is_default', true);
-
-        $ids = array_values(array_unique(array_filter($responsibleIds)));
+        $ids = array_values(array_unique(array_filter($bitrixUserIds)));
 
         if ($ids === []) {
             return;
@@ -62,8 +53,6 @@ class DepartmentResolver
             $this->users[$bitrixId] = $user;
         }
 
-        // Сотрудники, которых мы ещё не видели, либо у которых отделы не
-        // заполнены — их профили нужно забрать у портала.
         $missing = array_values(array_filter(
             $ids,
             fn (int $id) => ! isset($known[$id]) || $known[$id]->bitrix_department_ids === null,
@@ -75,26 +64,59 @@ class DepartmentResolver
     }
 
     /**
-     * Подразделение для задачи с указанным ответственным.
+     * Отделы задачи с указанием, кем сотрудник в ней является.
+     *
+     * @param  array<int>  $accompliceIds
+     * @return array<int, string> id отдела => источник (responsible|accomplice)
      */
-    public function forResponsible(?int $bitrixUserId): ?Department
+    public function forTask(?int $responsibleId, array $accompliceIds = []): array
     {
-        if ($this->byBitrixId === null) {
-            return null;
+        $result = [];
+
+        foreach ($this->departmentsOf($responsibleId) as $id) {
+            $result[$id] = 'responsible';
         }
 
-        $user = $bitrixUserId ? ($this->users[$bitrixUserId] ?? null) : null;
-
-        foreach ($user?->bitrix_department_ids ?? [] as $departmentId) {
-            if ($match = $this->byBitrixId->get((int) $departmentId)) {
-                return $match;
+        foreach ($accompliceIds as $userId) {
+            foreach ($this->departmentsOf((int) $userId) as $id) {
+                // Исполнитель важнее: если сотрудник и исполнитель, и
+                // соисполнитель в одном отделе, роль не понижаем.
+                $result[$id] ??= 'accomplice';
             }
         }
 
-        // Отдел не определился — задача уходит в дорожку по умолчанию,
-        // а если её нет, останется в «Без подразделения». Прятать такие
-        // задачи нельзя: именно они и теряются на практике.
-        return $this->fallback;
+        return $result;
+    }
+
+    /**
+     * Основной отдел задачи — отдел исполнителя.
+     */
+    public function primaryFor(?int $responsibleId): ?int
+    {
+        return $this->departmentsOf($responsibleId)[0] ?? null;
+    }
+
+    /**
+     * Наши узлы, соответствующие отделам сотрудника.
+     *
+     * @return array<int>
+     */
+    protected function departmentsOf(?int $bitrixUserId): array
+    {
+        if ($this->byBitrixId === null || ! $bitrixUserId) {
+            return [];
+        }
+
+        $user = $this->users[$bitrixUserId] ?? null;
+        $ids = [];
+
+        foreach ($user?->bitrix_department_ids ?? [] as $departmentId) {
+            if ($match = $this->byBitrixId->get((int) $departmentId)) {
+                $ids[] = $match->id;
+            }
+        }
+
+        return array_values(array_unique($ids));
     }
 
     /**
@@ -113,8 +135,8 @@ class DepartmentResolver
         try {
             $response = Bitrix24::forPortal($portal)->batch($commands);
         } catch (Bitrix24Exception $e) {
-            // Без отделов доска всё равно соберётся — задачи просто уйдут
-            // в дорожку по умолчанию. Ронять синхронизацию из-за этого нельзя.
+            // Без отделов доска соберётся, просто задачи не разложатся.
+            // Ронять синхронизацию из-за этого нельзя.
             Log::warning('Канбан: не удалось получить отделы сотрудников', [
                 'portal' => $portal->domain,
                 'error' => $e->getMessage(),
@@ -123,7 +145,7 @@ class DepartmentResolver
             return;
         }
 
-        foreach ($response as $key => $result) {
+        foreach ($response as $result) {
             $profile = is_array($result) ? ($result[0] ?? null) : null;
 
             if (! is_array($profile) || empty($profile['ID'])) {
@@ -132,7 +154,7 @@ class DepartmentResolver
 
             $bitrixId = (int) $profile['ID'];
 
-            $user = PortalUser::query()->updateOrCreate(
+            $this->users[$bitrixId] = PortalUser::query()->updateOrCreate(
                 ['portal_id' => $portal->id, 'bitrix_user_id' => $bitrixId],
                 [
                     'name' => trim(($profile['NAME'] ?? '').' '.($profile['LAST_NAME'] ?? ''))
@@ -143,8 +165,6 @@ class DepartmentResolver
                     'bitrix_department_ids' => array_map('intval', $profile['UF_DEPARTMENT'] ?? []),
                 ],
             );
-
-            $this->users[$bitrixId] = $user;
         }
     }
 }

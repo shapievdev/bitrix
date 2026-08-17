@@ -30,7 +30,7 @@ class TaskSynchronizer
      */
     protected const FIELDS = [
         'ID', 'TITLE', 'STATUS', 'PRIORITY', 'RESPONSIBLE_ID',
-        'CREATED_BY', 'DEADLINE', 'CLOSED_DATE', 'GROUP_ID',
+        'CREATED_BY', 'DEADLINE', 'CLOSED_DATE', 'GROUP_ID', 'ACCOMPLICES',
         'CHANGED_DATE', 'TAGS',
     ];
 
@@ -64,10 +64,18 @@ class TaskSynchronizer
         // Отделы всех ответственных забираем одной пачкой до обхода задач:
         // запрос профиля на каждую карточку выбил бы лимит REST на первой
         // же сотне.
-        $this->departments->warmUp($board->portal, array_map(
-            fn (array $task) => (int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0),
-            $tasks,
-        ));
+        // Отделы всех участников — и исполнителей, и соисполнителей.
+        $participants = [];
+
+        foreach ($tasks as $task) {
+            $participants[] = (int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0);
+
+            foreach ($this->accomplicesOf($task) as $id) {
+                $participants[] = $id;
+            }
+        }
+
+        $this->departments->warmUp($board->portal, $participants);
 
         $priorities = $this->priorityMap();
 
@@ -93,7 +101,7 @@ class TaskSynchronizer
         // чтобы они были видны в штатной карточке и в фильтре списка.
         $stats['pushed'] = $this->userFields->push(
             $board->portal,
-            $board->cards()->with('department', 'priorityLevel')->get(),
+            $board->cards()->with('departments', 'priorityLevel')->get(),
         );
 
         $board->forceFill(['synced_at' => now()])->save();
@@ -135,7 +143,10 @@ class TaskSynchronizer
         $priorities = $this->priorityMap();
         $this->departments->warmUp(
             $boards->first()->portal,
-            [(int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0)],
+            array_merge(
+                [(int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0)],
+                $this->accomplicesOf($task),
+            ),
         );
 
         foreach ($boards as $board) {
@@ -198,23 +209,63 @@ class TaskSynchronizer
         }
 
         $attributes = $this->attributesFrom($task);
-        $department = $this->departments->forResponsible($attributes['responsible_id']);
+        $primaryId = $this->departments->primaryFor($attributes['responsible_id']);
 
-        return $board->cards()->create($attributes + [
+        $card = $board->cards()->create($attributes + [
             'portal_id' => $board->portal_id,
             'board_column_id' => $column->id,
-            'department_id' => $department?->id,
+            'department_id' => $primaryId,
             'task_priority_id' => $this->priorityFor($attributes['priority'], $priorities)?->id,
             'bitrix_task_id' => (int) ($task['id'] ?? $task['ID']),
-            'position' => $board->cards()
-                ->where('board_column_id', $column->id)
-                ->when(
-                    $department === null,
-                    fn ($q) => $q->whereNull('department_id'),
-                    fn ($q) => $q->where('department_id', $department->id),
-                )
-                ->count(),
+            'position' => $board->cards()->where('board_column_id', $column->id)->count(),
         ]);
+
+        $this->syncDepartments($card, $task);
+
+        return $card;
+    }
+
+    /**
+     * Переписать связи задачи с отделами.
+     *
+     * Одна задача идёт через несколько отделов сразу: отдел исполнителя и
+     * отделы всех соисполнителей. Роль сохраняем — «моя задача» и
+     * «участвую» это разная нагрузка на отдел.
+     */
+    protected function syncDepartments(TaskCard $card, array $task): void
+    {
+        // Связи, проставленные руками, синхронизация не трогает.
+        if ($card->department_locked) {
+            return;
+        }
+
+        $map = $this->departments->forTask(
+            (int) ($task['responsibleId'] ?? $task['RESPONSIBLE_ID'] ?? 0) ?: null,
+            $this->accomplicesOf($task),
+        );
+
+        $card->departments()->sync(
+            collect($map)->mapWithKeys(fn (string $source, int $id) => [$id => [
+                'portal_id' => $card->portal_id,
+                'source' => $source,
+            ]])->all()
+        );
+    }
+
+    /**
+     * Соисполнители задачи.
+     *
+     * @return array<int>
+     */
+    protected function accomplicesOf(array $task): array
+    {
+        $raw = $task['accomplices'] ?? $task['ACCOMPLICES'] ?? [];
+
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('intval', $raw)));
     }
 
     /**
@@ -234,10 +285,10 @@ class TaskSynchronizer
         }
 
         // Сменился ответственный — задача могла уйти в другой отдел.
-        // Но не трогаем дорожку, если её выставили руками.
+        // Но не трогаем привязку, если её выставили руками.
         if (! $card->department_locked) {
             $attributes['department_id'] = $this->departments
-                ->forResponsible($attributes['responsible_id'])?->id;
+                ->primaryFor($attributes['responsible_id']);
         }
 
         $card->fill($attributes);
@@ -255,6 +306,8 @@ class TaskSynchronizer
         if ($newStatus !== null && $newStatus !== $previousStatus) {
             $this->mover->syncFromStatus($card, $newStatus, force: true);
         }
+
+        $this->syncDepartments($card, $task);
 
         return $changed;
     }

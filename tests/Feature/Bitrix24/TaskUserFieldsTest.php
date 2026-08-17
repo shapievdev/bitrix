@@ -77,7 +77,7 @@ class TaskUserFieldsTest extends TestCase
 
     protected function card(?Department $department = null, ?TaskPriority $priority = null): TaskCard
     {
-        return $this->board->cards()->create([
+        $card = $this->board->cards()->create([
             'portal_id' => $this->portal->id,
             'board_column_id' => $this->board->columns->first()->id,
             'department_id' => $department?->id,
@@ -86,6 +86,15 @@ class TaskUserFieldsTest extends TestCase
             'title' => 'Задача',
             'position' => 0,
         ]);
+
+        if ($department) {
+            $card->departments()->attach($department->id, [
+                'portal_id' => $this->portal->id,
+                'source' => 'responsible',
+            ]);
+        }
+
+        return $card->fresh();
     }
 
     public function test_поля_заводятся_на_портале_и_запоминаются(): void
@@ -175,7 +184,9 @@ class TaskUserFieldsTest extends TestCase
         $fields = app(TaskUserFields::class);
         $fields->push($this->portal, [$card]);
 
-        $card->forceFill(['department_id' => $second->id])->save();
+        $card->departments()->sync([
+            $second->id => ['portal_id' => $this->portal->id, 'source' => 'responsible'],
+        ]);
 
         $this->assertSame(1, $fields->push($this->portal, [$card->fresh()]));
     }
