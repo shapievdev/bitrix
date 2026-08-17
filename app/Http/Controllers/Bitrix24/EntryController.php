@@ -58,13 +58,31 @@ class EntryController extends Controller
         PortalContext::set($portal, $user);
 
         // Место встраивания и его параметры определяют, какой экран открыть:
-        // из карточки задачи приходит ID задачи, из меню — ничего.
+        // из карточки задачи приходит её ID, из режима просмотра — ничего.
         $placement = $params['PLACEMENT'] ?? 'DEFAULT';
         $options = json_decode($params['PLACEMENT_OPTIONS'] ?? '[]', true) ?: [];
 
         $request->session()->put('bitrix.placement', $placement);
         $request->session()->put('bitrix.placement_options', $options);
 
-        return redirect()->route('app.home');
+        return redirect()->to($this->destination($placement, $options));
+    }
+
+    /**
+     * Куда вести после рукопожатия.
+     *
+     * Приложение открывается из разных мест портала, и в каждом от него
+     * ждут разного: из карточки задачи — эту задачу, из раздела задач —
+     * доску целиком.
+     */
+    protected function destination(string $placement, array $options): string
+    {
+        $taskId = (int) ($options['taskId'] ?? $options['TASK_ID'] ?? $options['ID'] ?? 0);
+
+        if ($placement === 'TASK_VIEW_TAB' && $taskId > 0) {
+            return route('app.tasks.show', $taskId);
+        }
+
+        return route('app.home');
     }
 }

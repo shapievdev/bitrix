@@ -7,6 +7,7 @@ use App\Http\Controllers\Bitrix24\InstallController;
 use App\Http\Controllers\BoardController;
 use App\Http\Controllers\CardController;
 use App\Http\Controllers\DictionaryController;
+use App\Http\Controllers\TaskCardController;
 use App\Http\Middleware\BitrixFrameHeaders;
 use App\Http\Middleware\ResolveBitrixPortal;
 use Illuminate\Support\Facades\Route;
@@ -59,6 +60,10 @@ Route::middleware([ResolveBitrixPortal::class, BitrixFrameHeaders::class])
         Route::get('boards/{board}', [BoardController::class, 'show'])->name('boards.show');
         Route::delete('boards/{board}', [BoardController::class, 'destroy'])->name('boards.destroy');
         Route::post('boards/{board}/sync', [BoardController::class, 'sync'])->name('boards.sync');
+
+        // Вкладка внутри карточки задачи Битрикс24.
+        Route::get('tasks/{task}', [TaskCardController::class, 'show'])->name('tasks.show');
+        Route::patch('tasks/card/{card}', [TaskCardController::class, 'update'])->name('tasks.update');
 
         Route::patch('cards/{card}/move', [CardController::class, 'move'])->name('cards.move');
         Route::patch('cards/{card}/priority', [CardController::class, 'priority'])->name('cards.priority');
