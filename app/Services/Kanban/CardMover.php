@@ -2,6 +2,7 @@
 
 namespace App\Services\Kanban;
 
+use App\Enums\TaskStatus;
 use App\Facades\Bitrix24;
 use App\Models\BoardColumn;
 use App\Models\CardTransition;
@@ -70,7 +71,7 @@ class CardMover
         });
 
         if ($pushToBitrix && $source?->id !== $target->id) {
-            $this->pushStatus($card, $target, $actor);
+            $this->pushStatus($card, $target, $source, $actor);
         }
 
         return $card->refresh();
@@ -92,7 +93,15 @@ class CardMover
             return $card;
         }
 
-        $target = $card->board->columns->firstWhere('bitrix_status', $bitrixStatus);
+        $status = TaskStatus::tryFrom($bitrixStatus);
+
+        // Завершённая задача обязана оказаться в финальной колонке, даже
+        // если колонки ровно под этот статус нет: «выполнена» и «отклонена»
+        // оба означают, что работа закончена.
+        $target = $status?->isClosed()
+            ? ($card->board->columns->firstWhere('is_final', true)
+                ?? $card->board->columns->firstWhere('bitrix_status', $bitrixStatus))
+            : $card->board->columns->firstWhere('bitrix_status', $bitrixStatus);
 
         if (! $target || $target->id === $card->board_column_id) {
             return $card;
@@ -131,20 +140,43 @@ class CardMover
     }
 
     /**
-     * Отразить новую колонку в штатном статусе задачи.
+     * Отразить новую колонку в самой задаче портала.
+     *
+     * Завершение и возврат делаются отдельными методами, а не записью
+     * STATUS: портал на этом держит свою логику — снимает задачу с
+     * контроля, проставляет дату закрытия и уведомляет постановщика.
+     * Установка статуса в лоб всё это обходит.
      *
      * Молча проглатываем ошибку REST: карточка на доске уже переехала, и
      * откатывать перемещение из-за недоступного портала хуже, чем
      * разъехавшийся статус — его починит следующая синхронизация.
      */
-    protected function pushStatus(TaskCard $card, BoardColumn $target, ?PortalUser $actor): void
-    {
-        if ($target->bitrix_status === null || $target->bitrix_status === $card->bitrix_status) {
-            return;
-        }
+    protected function pushStatus(
+        TaskCard $card,
+        BoardColumn $target,
+        ?BoardColumn $source,
+        ?PortalUser $actor,
+    ): void {
+        $client = $actor ? Bitrix24::forUser($actor) : Bitrix24::forPortal($card->portal);
 
         try {
-            $client = $actor ? Bitrix24::forUser($actor) : Bitrix24::forPortal($card->portal);
+            // Перенос в финальную колонку завершает задачу.
+            if ($target->is_final) {
+                $client->call('tasks.task.complete', ['taskId' => $card->bitrix_task_id]);
+                $card->forceFill(['bitrix_status' => TaskStatus::Completed->value, 'closed_at' => now()])->save();
+
+                return;
+            }
+
+            // Вынос из финальной колонки возвращает задачу в работу.
+            if ($source?->is_final) {
+                $client->call('tasks.task.renew', ['taskId' => $card->bitrix_task_id]);
+                $card->forceFill(['closed_at' => null])->save();
+            }
+
+            if ($target->bitrix_status === null || $target->bitrix_status === $card->bitrix_status) {
+                return;
+            }
 
             $client->call('tasks.task.update', [
                 'taskId' => $card->bitrix_task_id,
@@ -155,7 +187,7 @@ class CardMover
         } catch (Bitrix24Exception $e) {
             Log::warning('Канбан: не удалось передать статус в Битрикс24', [
                 'task' => $card->bitrix_task_id,
-                'status' => $target->bitrix_status,
+                'column' => $target->name,
                 'error' => $e->getMessage(),
             ]);
         }

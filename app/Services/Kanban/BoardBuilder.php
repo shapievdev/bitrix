@@ -18,6 +18,20 @@ class BoardBuilder
 {
     public function __construct(protected PortalDictionaries $dictionaries) {}
 
+    /**
+     * Фильтр задач по умолчанию.
+     *
+     * Ограничиваем окном активности, а не статусом: завершённые задачи
+     * обязаны оставаться на доске, иначе при завершении задача просто
+     * исчезает вместо того, чтобы переехать в «Готово».
+     *
+     * @return array<string, mixed>
+     */
+    public static function defaultFilter(): array
+    {
+        return ['>CHANGED_DATE' => now()->subMonths(2)->toDateString()];
+    }
+
     public function create(
         string $name,
         ?int $groupId = null,
@@ -35,7 +49,7 @@ class BoardBuilder
                 'portal_id' => $portal->id,
                 'name' => $name,
                 'bitrix_group_id' => $groupId,
-                'filter' => $filter,
+                'filter' => $filter ?? self::defaultFilter(),
                 'created_by' => $author?->id,
             ]);
 
