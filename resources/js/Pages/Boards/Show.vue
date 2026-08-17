@@ -157,7 +157,7 @@ function sync() {
             </aside>
 
             <!-- Канбан -->
-            <section class="flex min-w-0 flex-1 flex-col">
+            <section class="flex min-w-0 flex-1 flex-col bg-slate-50">
                 <header class="flex items-baseline gap-2 px-4 py-2.5">
                     <h1 class="text-sm font-semibold">
                         {{ selected.name ?? 'Все задачи' }}
@@ -173,16 +173,21 @@ function sync() {
                     </Link>
                 </header>
 
-                <div class="flex flex-1 gap-3 overflow-x-auto px-4 pb-4">
+                <div class="flex flex-1 gap-4 overflow-x-auto px-4 pb-4">
                     <div
-                        v-for="column in columns"
+                        v-for="(column, index) in columns"
                         :key="column.id"
-                        class="flex w-64 shrink-0 flex-col rounded-lg bg-slate-100"
+                        class="flex w-70 shrink-0 flex-col"
+                        :class="index < columns.length - 1 ? 'border-r border-dashed border-slate-300 pr-4' : ''"
                     >
-                        <header class="flex items-center gap-2 px-3 py-2">
-                            <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: column.color }" />
-                            <h3 class="truncate text-sm font-semibold">{{ column.name }}</h3>
-                            <span class="ml-auto text-xs tabular-nums text-slate-400">
+                        <!-- Шапка-плашка как в канбане Битрикса: цвет колонки
+                             заливает всю ширину, счётчик справа. -->
+                        <header
+                            class="flex items-center gap-2 rounded-sm px-3 py-2 text-white"
+                            :style="{ backgroundColor: column.color }"
+                        >
+                            <h3 class="truncate text-[13px] font-semibold">{{ column.name }}</h3>
+                            <span class="ml-auto text-xs tabular-nums opacity-80">
                                 {{ column.total }}<template v-if="column.wipLimit">/{{ column.wipLimit }}</template>
                             </span>
                         </header>
@@ -191,7 +196,7 @@ function sync() {
                             v-model="stacks[column.id]"
                             :group="`board-${board.id}`"
                             item-key="id"
-                            class="flex flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2"
+                            class="flex flex-1 flex-col gap-2 overflow-y-auto pt-2"
                             ghost-class="opacity-40"
                             @change="onChange(column.id, $event)"
                         >

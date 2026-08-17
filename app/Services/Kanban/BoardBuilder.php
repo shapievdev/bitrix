@@ -73,7 +73,7 @@ class BoardBuilder
                 'name' => $column['name'],
                 'color' => $column['color'],
                 'position' => $position,
-                'bitrix_status' => $column['status']->value,
+                'bitrix_status' => $column['status']?->value,
                 'is_default' => $position === 0,
                 'is_final' => $column['final'],
             ]);

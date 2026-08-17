@@ -100,8 +100,13 @@ class TaskSynchronizerTest extends TestCase
     {
         $columns = $this->board->columns;
 
-        $this->assertCount(4, $columns);
-        $this->assertSame(['Новые', 'В работе', 'На проверке', 'Готово'], $columns->pluck('name')->all());
+        $this->assertCount(5, $columns);
+        // «Готово» и «Завершены» разведены: первое — наш этап, второе
+        // отражает реальное закрытие задачи в портале.
+        $this->assertSame(
+            ['Новые', 'В работе', 'На проверке', 'Готово', 'Завершены'],
+            $columns->pluck('name')->all(),
+        );
         $this->assertTrue($columns->first()->is_default);
         $this->assertTrue($columns->last()->is_final);
     }
@@ -122,7 +127,7 @@ class TaskSynchronizerTest extends TestCase
 
         $this->assertSame('Новые', $byTitle['Свёрстать форму']->column->name);
         $this->assertSame('В работе', $byTitle['Починить импорт']->column->name);
-        $this->assertSame('Готово', $byTitle['Выкатить релиз']->column->name);
+        $this->assertSame('Завершены', $byTitle['Выкатить релиз']->column->name);
     }
 
     public function test_повторная_синхронизация_не_плодит_карточки(): void
@@ -196,7 +201,7 @@ class TaskSynchronizerTest extends TestCase
         $this->fakeList([$this->task(1, 'Задача', status: 5)]);
         $synchronizer->syncBoard($this->board);
 
-        $this->assertSame('Готово', TaskCard::first()->column->name);
+        $this->assertSame('Завершены', TaskCard::first()->column->name);
     }
 
     public function test_событие_обновления_синхронизирует_одну_задачу(): void

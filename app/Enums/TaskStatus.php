@@ -40,17 +40,23 @@ enum TaskStatus: int
     }
 
     /**
-     * Статусы для набора колонок по умолчанию у новой доски.
+     * Набор колонок по умолчанию у новой доски.
      *
-     * @return array<int, array{name: string, status: self, color: string, final: bool}>
+     * «Готово» и «Завершены» — разные вещи, и смешивать их нельзя.
+     * «Готово» это наш собственный этап: исполнитель закончил работу, но
+     * задача в портале ещё открыта, и перенос в неё ничего там не меняет.
+     * «Завершены» отражает реальное закрытие задачи в Битрикс24.
+     *
+     * @return array<int, array{name: string, status: ?self, color: string, final: bool}>
      */
     public static function defaultColumns(): array
     {
         return [
-            ['name' => 'Новые', 'status' => self::New, 'color' => '#94a3b8', 'final' => false],
-            ['name' => 'В работе', 'status' => self::InProgress, 'color' => '#3b82f6', 'final' => false],
-            ['name' => 'На проверке', 'status' => self::Supposedly, 'color' => '#f59e0b', 'final' => false],
-            ['name' => 'Готово', 'status' => self::Completed, 'color' => '#22c55e', 'final' => true],
+            ['name' => 'Новые', 'status' => self::New, 'color' => '#748a9d', 'final' => false],
+            ['name' => 'В работе', 'status' => self::InProgress, 'color' => '#2fc7f7', 'final' => false],
+            ['name' => 'На проверке', 'status' => self::Supposedly, 'color' => '#f6a800', 'final' => false],
+            ['name' => 'Готово', 'status' => null, 'color' => '#8f79d9', 'final' => false],
+            ['name' => 'Завершены', 'status' => self::Completed, 'color' => '#4ec24e', 'final' => true],
         ];
     }
 }

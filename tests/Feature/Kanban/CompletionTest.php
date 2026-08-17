@@ -7,6 +7,7 @@ use App\Models\Board;
 use App\Models\BoardColumn;
 use App\Models\Portal;
 use App\Models\TaskCard;
+use App\Services\Kanban\BoardBuilder;
 use App\Services\Kanban\CardMover;
 use App\Support\PortalContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -141,6 +142,45 @@ class CompletionTest extends TestCase
         app(CardMover::class)->syncFromStatus($card, TaskStatus::Declined->value, force: true);
 
         $this->assertSame($this->done->id, $card->fresh()->board_column_id);
+    }
+
+    public function test_готово_и_завершены_разные_колонки(): void
+    {
+        $board = app(BoardBuilder::class)->create('Новая доска');
+        $columns = $board->columns()->orderBy('position')->get();
+
+        $this->assertSame(
+            ['Новые', 'В работе', 'На проверке', 'Готово', 'Завершены'],
+            $columns->pluck('name')->all(),
+        );
+
+        $ready = $columns->firstWhere('name', 'Готово');
+        $completed = $columns->firstWhere('name', 'Завершены');
+
+        // «Готово» — наш собственный этап: исполнитель закончил, но задача
+        // в портале ещё открыта, и перенос туда там ничего не меняет.
+        $this->assertNull($ready->bitrix_status);
+        $this->assertFalse($ready->is_final);
+
+        // Закрытие задачи отражает только «Завершены».
+        $this->assertSame(TaskStatus::Completed->value, $completed->bitrix_status);
+        $this->assertTrue($completed->is_final);
+    }
+
+    public function test_перенос_в_готово_ничего_не_шлёт_в_битрикс(): void
+    {
+        $ready = $this->board->columns()->create([
+            'portal_id' => $this->portal->id,
+            'name' => 'Готово',
+            'position' => 3,
+            'bitrix_status' => null,
+            'is_final' => false,
+        ]);
+
+        app(CardMover::class)->move($this->card(), $ready);
+
+        // Собственный этап доски не должен трогать задачу на портале.
+        Http::assertNothingSent();
     }
 
     public function test_перенос_между_обычными_колонками_шлёт_обычный_статус(): void
