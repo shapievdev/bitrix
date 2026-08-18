@@ -34,22 +34,41 @@ class TaskVisibility
     }
 
     /**
+     * Видит ли сотрудник больше, чем свои задачи.
+     *
+     * От этого зависит, есть ли смысл в переключателе «мои задачи»:
+     * рядовому сотруднику сужать нечего, он и так видит только своё.
+     */
+    public function canNarrowToOwn(?PortalUser $user): bool
+    {
+        return $this->isUnrestricted($user) || $this->headDepartmentIds($user) !== [];
+    }
+
+    /**
      * Ограничить выборку задачами, доступными сотруднику.
      *
+     * @param  bool  $onlyMine  Сузить до задач с личным участием.
      * @param  Builder<TaskCard>  $query
      * @return Builder<TaskCard>
      */
-    public function apply(Builder $query, ?PortalUser $user): Builder
+    public function apply(Builder $query, ?PortalUser $user, bool $onlyMine = false): Builder
     {
-        if ($this->isUnrestricted($user)) {
-            return $query;
-        }
-
         // Без пользователя не показываем ничего: это либо фоновая задача,
         // забравшая доску мимо контекста, либо ошибка в мидлваре. Пустая
         // доска здесь безопаснее, чем чужие задачи.
         if (! $user) {
             return $query->whereRaw('1 = 0');
+        }
+
+        // «Мои задачи» сужает выборку кому угодно, включая администратора:
+        // это его собственный выбор, а не ограничение прав. Проверяется
+        // раньше уровня доступа именно поэтому.
+        if ($onlyMine) {
+            return $query->participatedBy($user->bitrix_user_id);
+        }
+
+        if ($this->isUnrestricted($user)) {
+            return $query;
         }
 
         $departmentIds = $this->headDepartmentIds($user);

@@ -53,7 +53,7 @@ class BoardController extends Controller
 
         $cards = $board->cards()
             ->with(['priorityLevel', 'departments'])
-            ->tap(fn ($query) => $visibility->apply($query, $viewer))
+            ->tap(fn ($query) => $visibility->apply($query, $viewer, $filters['mine']))
             ->when($scopeIds, fn ($query) => $query->whereHas(
                 'departments',
                 fn ($q) => $q->whereIn('departments.id', $scopeIds),
@@ -70,7 +70,7 @@ class BoardController extends Controller
         // выбора, иначе панель слева схлопывается до одного пункта. Но от
         // видимости зависеть обязаны: иначе сотрудник видит в панели
         // «Финансовый департамент — 340», открывает и получает три задачи.
-        $counts = $this->cardCounts($board, $visibility, $viewer);
+        $counts = $this->cardCounts($board, $visibility, $viewer, $filters['mine']);
 
         $primary = $all->where('is_primary', true)->values();
         $parentForUnits = $selectedNode?->is_primary
@@ -85,7 +85,7 @@ class BoardController extends Controller
                 // Счётчик «Все задачи» — тоже без завершённых и тоже
                 // только по видимым.
                 'total' => $board->cards()
-                    ->tap(fn ($query) => $visibility->apply($query, $viewer))
+                    ->tap(fn ($query) => $visibility->apply($query, $viewer, $filters['mine']))
                     ->whereHas('column', fn ($q) => $q->where('is_final', false))
                     ->count(),
             ],
@@ -97,6 +97,9 @@ class BoardController extends Controller
                 'name' => $viewer?->name,
                 'isAdmin' => $visibility->isUnrestricted($viewer),
                 'headsDepartments' => $visibility->headDepartmentIds($viewer) !== [],
+                // Рядовому сотруднику переключатель показывать незачем —
+                // сужать ему нечего.
+                'canNarrowToOwn' => $visibility->canNarrowToOwn($viewer),
             ],
 
             'departments' => $primary->map(fn (Department $d) => [
@@ -159,7 +162,7 @@ class BoardController extends Controller
 
             // Исполнители только те, чьи задачи вообще есть на доске —
             // список всех сотрудников портала здесь бесполезен.
-            'responsibles' => $this->responsibles($board, $visibility, $viewer),
+            'responsibles' => $this->responsibles($board, $visibility, $viewer, $filters['mine']),
         ]);
     }
 
@@ -172,10 +175,14 @@ class BoardController extends Controller
      *
      * @return array<int, array{id: int, name: string}>
      */
-    protected function responsibles(Board $board, TaskVisibility $visibility, ?PortalUser $viewer): array
-    {
+    protected function responsibles(
+        Board $board,
+        TaskVisibility $visibility,
+        ?PortalUser $viewer,
+        bool $onlyMine = false,
+    ): array {
         $ids = $board->cards()->whereNotNull('responsible_id')
-            ->tap(fn ($query) => $visibility->apply($query, $viewer))
+            ->tap(fn ($query) => $visibility->apply($query, $viewer, $onlyMine))
             ->distinct()
             ->pluck('responsible_id');
 
@@ -256,8 +263,12 @@ class BoardController extends Controller
      *
      * @return array<int, int>
      */
-    protected function cardCounts(Board $board, TaskVisibility $visibility, ?PortalUser $viewer): array
-    {
+    protected function cardCounts(
+        Board $board,
+        TaskVisibility $visibility,
+        ?PortalUser $viewer,
+        bool $onlyMine = false,
+    ): array {
         // Видимые карточки — подзапросом, а не списком идентификаторов:
         // у администратора на активной доске их тысячи, и тащить их в
         // память ради счётчиков незачем.
@@ -265,7 +276,7 @@ class BoardController extends Controller
             ->select('task_cards.id')
             ->where('board_id', $board->id)
             ->whereHas('column', fn ($q) => $q->where('is_final', false))
-            ->tap(fn ($query) => $visibility->apply($query, $viewer));
+            ->tap(fn ($query) => $visibility->apply($query, $viewer, $onlyMine));
 
         return DB::table('department_task_card')
             ->whereIn('task_card_id', $visible)
@@ -284,6 +295,9 @@ class BoardController extends Controller
     {
         return [
             'q' => trim((string) $request->query('q', '')),
+            // Сужение до собственного участия. Для рядового сотрудника
+            // ничего не меняет — он и так видит только свои задачи.
+            'mine' => $request->boolean('mine'),
             'priority' => $request->integer('priority') ?: null,
             'responsible' => $request->integer('responsible') ?: null,
             'deadline' => in_array($request->query('deadline'), ['overdue', 'with', 'without'], true)

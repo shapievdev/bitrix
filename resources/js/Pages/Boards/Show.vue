@@ -23,6 +23,7 @@ const props = defineProps({
 // Что за набор задач человек вообще видит — объясняет, почему на доске
 // три карточки, а не триста.
 const scopeHint = computed(() => {
+    if (props.filters.mine) return 'только мои задачи'
     if (props.viewer.isAdmin) return 'все задачи портала'
     if (props.viewer.headsDepartments) return 'задачи вашего подразделения'
 
@@ -63,7 +64,13 @@ const search = ref(props.filters.q ?? '')
 let searchTimer = null
 
 const hasFilters = computed(() =>
-    Boolean(props.filters.q || props.filters.priority || props.filters.responsible || props.filters.deadline),
+    Boolean(
+        props.filters.q
+        || props.filters.mine
+        || props.filters.priority
+        || props.filters.responsible
+        || props.filters.deadline,
+    ),
 )
 
 /**
@@ -73,6 +80,7 @@ function reload(overrides = {}) {
     const query = {
         department: props.selected.id ?? undefined,
         q: search.value || undefined,
+        mine: props.filters.mine ? 1 : undefined,
         priority: props.filters.priority ?? undefined,
         responsible: props.filters.responsible ?? undefined,
         deadline: props.filters.deadline ?? undefined,
@@ -139,7 +147,11 @@ function openFullForm() {
 
 function resetFilters() {
     search.value = ''
-    reload({ q: undefined, priority: undefined, responsible: undefined, deadline: undefined })
+    reload({ q: undefined, mine: undefined, priority: undefined, responsible: undefined, deadline: undefined })
+}
+
+function toggleMine() {
+    reload({ mine: props.filters.mine ? undefined : 1 })
 }
 
 function onChange(columnId, event) {
@@ -345,6 +357,25 @@ function sync() {
                         >
                             + Создать задачу
                         </button>
+
+                        <!-- Сузиться до себя. Показываем только тем, кому
+                             есть что сужать: рядовой сотрудник и так видит
+                             лишь свои задачи, и галочка сбивала бы с толку. -->
+                        <label
+                            v-if="viewer.canNarrowToOwn"
+                            class="flex h-7 cursor-pointer select-none items-center gap-1.5 rounded-md border px-2 text-xs transition"
+                            :class="filters.mine
+                                ? 'border-[#2fc7f7] bg-[#2fc7f7]/10 font-medium text-slate-900'
+                                : 'border-transparent bg-slate-100 text-slate-500 hover:bg-slate-200'"
+                        >
+                            <input
+                                type="checkbox"
+                                class="size-3.5 accent-[#2fc7f7]"
+                                :checked="filters.mine"
+                                @change="toggleMine"
+                            >
+                            Мои задачи
+                        </label>
 
                         <div class="relative">
                             <svg

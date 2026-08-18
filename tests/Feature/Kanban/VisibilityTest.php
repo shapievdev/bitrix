@@ -108,11 +108,14 @@ class VisibilityTest extends TestCase
         return $card;
     }
 
-    protected function openAs(PortalUser $user): TestResponse
+    protected function openAs(PortalUser $user, array $query = []): TestResponse
     {
+        $url = route('app.boards.show', $this->board->id)
+            .($query === [] ? '' : '?'.http_build_query($query));
+
         return $this
             ->withSession(['bitrix.portal_id' => $this->portal->id, 'bitrix.user_id' => $user->id])
-            ->get(route('app.boards.show', $this->board->id));
+            ->get($url);
     }
 
     /**
@@ -205,6 +208,70 @@ class VisibilityTest extends TestCase
         // В фильтре исполнителей чужих быть не должно — иначе он выдаёт
         // состав отделов, задач которых сотрудник не видит.
         $this->assertSame([10], collect($props['responsibles'])->pluck('id')->all());
+    }
+
+    public function test_мои_задачи_сужают_выборку_администратора(): void
+    {
+        $admin = $this->person(1, 'Администратор', admin: true);
+
+        $this->card('Я исполнитель', ['responsible_id' => 1]);
+        $this->card('Я соисполнитель', ['accomplice_ids' => [1]]);
+        $this->card('Я наблюдатель', ['auditor_ids' => [1]]);
+        $this->card('Я постановщик', ['creator_id' => 1]);
+        $this->card('Совсем чужая', ['responsible_id' => 99, 'creator_id' => 98]);
+
+        // Без галочки администратор видит всё.
+        $this->assertCount(5, $this->titlesFrom($this->openAs($admin)));
+
+        $titles = $this->titlesFrom($this->openAs($admin, ['mine' => 1]));
+        sort($titles);
+
+        $this->assertSame([
+            'Я исполнитель',
+            'Я наблюдатель',
+            'Я постановщик',
+            'Я соисполнитель',
+        ], $titles);
+    }
+
+    public function test_мои_задачи_сужают_и_счётчики(): void
+    {
+        $admin = $this->person(1, 'Администратор', admin: true);
+
+        $this->card('Моя', ['responsible_id' => 1]);
+        $this->card('Чужая', ['responsible_id' => 99]);
+
+        $props = $this->openAs($admin, ['mine' => 1])->viewData('page')['props'];
+
+        $this->assertSame(1, $props['board']['total']);
+        $this->assertSame(1, $props['departments'][0]['count']);
+        $this->assertSame([1], collect($props['responsibles'])->pluck('id')->all());
+    }
+
+    public function test_руководителю_переключатель_доступен_а_рядовому_нет(): void
+    {
+        $worker = $this->person(10, 'Исполнитель');
+        $head = $this->person(20, 'Руководитель');
+        $this->department->forceFill(['head_id' => 20])->save();
+
+        $this->assertFalse(
+            $this->openAs($worker)->viewData('page')['props']['viewer']['canNarrowToOwn'],
+        );
+        $this->assertTrue(
+            $this->openAs($head)->viewData('page')['props']['viewer']['canNarrowToOwn'],
+        );
+    }
+
+    public function test_рядовому_сотруднику_галочка_ничего_не_расширяет(): void
+    {
+        $worker = $this->person(10, 'Исполнитель');
+
+        $this->card('Моя', ['responsible_id' => 10]);
+        $this->card('Чужая', ['responsible_id' => 99]);
+
+        // Параметр в адресе не должен работать как лазейка в обратную
+        // сторону: сужение остаётся сужением.
+        $this->assertSame(['Моя'], $this->titlesFrom($this->openAs($worker, ['mine' => 1])));
     }
 
     public function test_чужую_задачу_нельзя_переместить(): void
