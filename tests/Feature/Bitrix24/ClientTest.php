@@ -145,7 +145,7 @@ class ClientTest extends TestCase
         $this->assertSame([0, 50, 100], $starts);
     }
 
-    public function test_не_сдвигающийся_next_прекращает_обход(): void
+    public function test_не_сдвигающийся_next_роняет_обход(): void
     {
         $portal = $this->portal();
 
@@ -155,12 +155,30 @@ class ClientTest extends TestCase
             'next' => 0,
         ])]);
 
-        $items = iterator_to_array(
+        // Раньше обход здесь молча прерывался, и снаружи огрызок из одной
+        // задачи выглядел как полный список. Синхронизация принимала его
+        // за истину и снимала с доски всё остальное — так и потеряли
+        // 797 карточек 18.08.2026. Неполный ответ обязан быть громким.
+        $this->expectException(Bitrix24Exception::class);
+
+        iterator_to_array(
             Bitrix24::forPortal($portal)->list('tasks.task.list', [], 'tasks')
         );
+    }
 
-        $this->assertCount(1, $items);
-        Http::assertSentCount(1);
+    public function test_пустая_страница_с_обещанным_продолжением_роняет_обход(): void
+    {
+        $portal = $this->portal();
+
+        Http::fakeSequence()
+            ->push(['result' => ['tasks' => [['ID' => '1']]], 'next' => 50])
+            ->push(['result' => ['tasks' => []], 'next' => 100]);
+
+        $this->expectException(Bitrix24Exception::class);
+
+        iterator_to_array(
+            Bitrix24::forPortal($portal)->list('tasks.task.list', [], 'tasks')
+        );
     }
 
     public function test_batch_разбивает_команды_по_лимиту(): void

@@ -74,6 +74,15 @@ class SyncBoards extends Command
         try {
             $stats = $synchronizer->syncBoard($board);
 
+            if ($stats['skipped'] ?? false) {
+                $this->components->twoColumnDetail(
+                    "  {$board->name}",
+                    '<fg=gray>уже синхронизируется, пропущено</>',
+                );
+
+                return true;
+            }
+
             $this->components->twoColumnDetail(
                 "  {$board->name}",
                 sprintf(

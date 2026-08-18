@@ -11,6 +11,7 @@ use App\Services\Bitrix24\Exceptions\Bitrix24Exception;
 use App\Services\Bitrix24\TaskUserFields;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -53,6 +54,31 @@ class TaskSynchronizer
             throw new \RuntimeException("Доска «{$board->name}» без колонок — синхронизировать некуда.");
         }
 
+        // Два обхода одной доски разом недопустимы. Расписание защищено
+        // withoutOverlapping, но это защита от самого себя: запуск руками
+        // или кнопкой «Обновить» ей не подчиняется, а две синхронизации
+        // вместе упираются в лимит REST, и одна получает обрезанный
+        // список — со снятием с доски всего остального.
+        $lock = Cache::lock("kanban:sync:board:{$board->id}", 900);
+
+        if (! $lock->get()) {
+            Log::info('Канбан: синхронизация доски уже идёт, повтор пропущен', ['board' => $board->name]);
+
+            return ['created' => 0, 'updated' => 0, 'removed' => 0, 'pushed' => 0, 'skipped' => true];
+        }
+
+        try {
+            return $this->runSync($board);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * @return array{created: int, updated: int, removed: int, pushed: int}
+     */
+    protected function runSync(Board $board): array
+    {
         $stats = ['created' => 0, 'updated' => 0, 'removed' => 0, 'pushed' => 0];
         $seen = [];
 
@@ -491,8 +517,25 @@ class TaskSynchronizer
      */
     protected function removeVanished(Board $board, array $seen): int
     {
+        // Пустой список — это почти всегда сбой связи, а не «на портале
+        // не осталось ни одной задачи». Прежний when() в этом случае
+        // просто не навешивал условие, и доска стиралась целиком.
+        //
+        // Опустошить доску можно только руками, через настройки. Здесь
+        // цена ошибки несимметрична: лишняя карточка уйдёт следующей
+        // синхронизацией, а снятая уносит с собой колонку, порядок,
+        // приоритет и всю историю переходов — восстановить их неоткуда.
+        if ($seen === []) {
+            Log::warning('Канбан: портал вернул пустой список задач — снятие с доски пропущено', [
+                'board' => $board->name,
+                'cards' => $board->cards()->count(),
+            ]);
+
+            return 0;
+        }
+
         return $board->cards()
-            ->when($seen !== [], fn ($q) => $q->whereNotIn('bitrix_task_id', $seen))
+            ->whereNotIn('bitrix_task_id', $seen)
             ->delete();
     }
 }

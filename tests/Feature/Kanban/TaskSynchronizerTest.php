@@ -6,6 +6,7 @@ use App\Jobs\ProcessBitrixEvent;
 use App\Models\Board;
 use App\Models\Portal;
 use App\Models\TaskCard;
+use App\Services\Bitrix24\Exceptions\Bitrix24Exception;
 use App\Services\Kanban\BoardBuilder;
 use App\Services\Kanban\CardMover;
 use App\Services\Kanban\TaskSynchronizer;
@@ -29,10 +30,13 @@ class TaskSynchronizerTest extends TestCase
         config(['bitrix24.throttle.enabled' => false]);
 
         Http::fake([
-            '*/rest/tasks.task.list*' => fn () => Http::response([
+            '*/rest/tasks.task.list*' => fn () => Http::response(array_filter([
                 'result' => ['tasks' => $this->tasks],
                 'total' => count($this->tasks),
-            ]),
+                // Портал обещает следующую страницу — нужно, чтобы
+                // разыграть оборванный обход.
+                'next' => $this->listNext,
+            ], fn ($value) => $value !== null)),
             '*/rest/tasks.task.get*' => fn () => $this->singleTask === null
                 ? Http::response(['error' => 'TASK_NOT_FOUND'], 400)
                 : Http::response(['result' => ['task' => $this->singleTask]]),
@@ -90,6 +94,9 @@ class TaskSynchronizerTest extends TestCase
 
     /** Ответ tasks.task.get; null — задачи на портале нет. */
     protected ?array $singleTask = null;
+
+    /** Значение next в ответе списка; null — страница последняя. */
+    protected ?int $listNext = null;
 
     protected function fakeList(array $tasks): void
     {
@@ -160,6 +167,48 @@ class TaskSynchronizerTest extends TestCase
         // Дубликаты схлопываются: портал повторяет наблюдателя, если он
         // указан и вручную, и через подписку на проект.
         $this->assertSame([77, 88], TaskCard::first()->auditor_ids);
+    }
+
+    public function test_пустой_ответ_портала_не_стирает_доску(): void
+    {
+        $this->fakeList([
+            $this->task(1, 'Первая'),
+            $this->task(2, 'Вторая'),
+        ]);
+        app(TaskSynchronizer::class)->syncBoard($this->board);
+
+        $this->assertSame(2, TaskCard::count());
+
+        // Связь оборвалась, портал ответил пустотой. Раньше это снимало
+        // с доски всё разом — вместе с колонками, порядком и историей.
+        $this->fakeList([]);
+        $stats = app(TaskSynchronizer::class)->syncBoard($this->board);
+
+        $this->assertSame(0, $stats['removed']);
+        $this->assertSame(2, TaskCard::count());
+    }
+
+    public function test_оборванный_постраничный_обход_не_снимает_карточки(): void
+    {
+        $this->fakeList([
+            $this->task(1, 'Первая'),
+            $this->task(2, 'Вторая'),
+        ]);
+        app(TaskSynchronizer::class)->syncBoard($this->board);
+
+        // Портал обещает продолжение, но следующая страница пустая:
+        // ответ неполный, и принимать его за весь список нельзя.
+        $this->fakeList([]);
+        $this->listNext = 50;
+
+        $this->expectException(Bitrix24Exception::class);
+
+        try {
+            app(TaskSynchronizer::class)->syncBoard($this->board);
+        } finally {
+            // Упало до снятия — карточки на месте.
+            $this->assertSame(2, TaskCard::count());
+        }
     }
 
     public function test_повторная_синхронизация_не_плодит_карточки(): void
