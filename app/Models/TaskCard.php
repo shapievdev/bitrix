@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToPortal;
 use Database\Factories\TaskCardFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -42,11 +43,13 @@ class TaskCard extends Model
         'title_normalized',
         'responsible_id',
         'accomplice_ids',
+        'auditor_ids',
         'creator_id',
         'bitrix_status',
         'priority',
         'deadline',
         'closed_at',
+        'entered_column_at',
         'fields',
         'pushed_user_fields',
         'synced_at',
@@ -57,9 +60,11 @@ class TaskCard extends Model
         return [
             'fields' => 'array',
             'accomplice_ids' => 'array',
+            'auditor_ids' => 'array',
             'pushed_user_fields' => 'array',
             'deadline' => 'datetime',
             'closed_at' => 'datetime',
+            'entered_column_at' => 'datetime',
             'synced_at' => 'datetime',
             'bitrix_status' => 'integer',
             'priority' => 'integer',
@@ -143,11 +148,36 @@ class TaskCard extends Model
     /**
      * Когда карточка попала в текущую колонку.
      *
-     * Нужно для «времени в колонке»: если переходов ещё не было, точкой
-     * отсчёта служит появление карточки на доске.
+     * Значение хранится в самой карточке: доска показывает время на этапе
+     * для каждой из сотен карточек сразу, и поднимать ради одной даты
+     * историю переходов на каждую — лишние запросы. История остаётся
+     * источником для отчётов, здесь нужен только последний рубеж.
+     *
+     * Переходов может не быть вовсе — тогда точка отсчёта это появление
+     * карточки на доске.
      */
     public function enteredColumnAt(): ?Carbon
     {
-        return $this->transitions->first()?->created_at ?? $this->created_at;
+        return $this->entered_column_at ?? $this->created_at;
+    }
+
+    /**
+     * Задачи, в которых сотрудник участвует в любой роли.
+     *
+     * Исполнитель, соисполнитель, наблюдатель или постановщик: во всех
+     * четырёх случаях задача его касается и прятать её нельзя.
+     *
+     * @param  Builder<$this>  $query
+     * @return Builder<$this>
+     */
+    public function scopeParticipatedBy(Builder $query, int $bitrixUserId): Builder
+    {
+        return $query->where(function (Builder $inner) use ($bitrixUserId) {
+            $inner
+                ->where('responsible_id', $bitrixUserId)
+                ->orWhere('creator_id', $bitrixUserId)
+                ->orWhereJsonContains('accomplice_ids', $bitrixUserId)
+                ->orWhereJsonContains('auditor_ids', $bitrixUserId);
+        });
     }
 }

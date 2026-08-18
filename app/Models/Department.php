@@ -41,6 +41,7 @@ class Department extends Model
         'position',
         'bitrix_department_id',
         'bitrix_parent_id',
+        'head_id',
         'is_default',
         'is_primary',
     ];
@@ -53,6 +54,7 @@ class Department extends Model
             'position' => 'integer',
             'bitrix_department_id' => 'integer',
             'bitrix_parent_id' => 'integer',
+            'head_id' => 'integer',
         ];
     }
 

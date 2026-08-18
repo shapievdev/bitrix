@@ -43,11 +43,19 @@ class BoardHttpTest extends TestCase
         ]);
     }
 
+    /**
+     * Смотрящий по умолчанию — администратор портала.
+     *
+     * Здесь проверяются раскладка доски и изоляция порталов, а не права:
+     * рядовой сотрудник видел бы только свои задачи, и каждый тест
+     * пришлось бы начинать с назначения себя исполнителем. Сами правила
+     * видимости проверяются отдельно, в VisibilityTest.
+     */
     protected function user(Portal $portal): PortalUser
     {
         return PortalUser::firstOrCreate(
             ['portal_id' => $portal->id, 'bitrix_user_id' => 1],
-            ['name' => 'Иван Петров'],
+            ['name' => 'Иван Петров', 'is_admin' => true],
         );
     }
 

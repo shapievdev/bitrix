@@ -7,18 +7,35 @@ use App\Models\TaskCard;
 use App\Models\TaskPriority;
 use App\Services\Bitrix24\TaskUserFields;
 use App\Services\Kanban\CardMover;
+use App\Services\Kanban\TaskVisibility;
 use App\Support\PortalContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
 class CardController extends Controller
 {
+    public function __construct(protected TaskVisibility $visibility) {}
+
+    /**
+     * Не дать трогать чужую задачу.
+     *
+     * Проверка нужна и здесь, а не только в выборке доски: адрес
+     * перемещения угадывается по идентификатору, и без неё сотрудник мог
+     * бы двигать и завершать задачи, которых даже не видит.
+     */
+    protected function authorizeCard(TaskCard $card): void
+    {
+        abort_unless($this->visibility->allows(PortalContext::user(), $card), 403);
+    }
+
     public function move(
         Request $request,
         TaskCard $card,
         CardMover $mover,
         TaskUserFields $userFields,
     ): RedirectResponse {
+        $this->authorizeCard($card);
+
         $validated = $request->validate([
             'column_id' => ['required', 'integer'],
             'position' => ['nullable', 'integer', 'min:0'],
@@ -57,6 +74,8 @@ class CardController extends Controller
         CardMover $mover,
         TaskUserFields $userFields,
     ): RedirectResponse {
+        $this->authorizeCard($card);
+
         $validated = $request->validate([
             'priority_id' => ['nullable', 'integer'],
         ]);

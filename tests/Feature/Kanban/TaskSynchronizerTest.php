@@ -130,6 +130,38 @@ class TaskSynchronizerTest extends TestCase
         $this->assertSame('Завершены', $byTitle['Выкатить релиз']->column->name);
     }
 
+    public function test_новая_задача_встаёт_наверх_колонки(): void
+    {
+        $this->fakeList([$this->task(1, 'Старая', status: 1)]);
+        app(TaskSynchronizer::class)->syncBoard($this->board);
+
+        $this->fakeList([
+            $this->task(1, 'Старая', status: 1),
+            $this->task(2, 'Свежая', status: 1),
+        ]);
+        app(TaskSynchronizer::class)->syncBoard($this->board);
+
+        $byTitle = TaskCard::all()->keyBy('title');
+
+        // Свежая наверху, старая сдвинулась вниз — но осталась на доске
+        // и не перемешалась с остальными.
+        $this->assertSame(0, $byTitle['Свежая']->position);
+        $this->assertSame(1, $byTitle['Старая']->position);
+    }
+
+    public function test_наблюдатели_задачи_сохраняются(): void
+    {
+        $this->fakeList([
+            $this->task(1, 'С наблюдателями', extra: ['auditors' => ['77', '88', '77']]),
+        ]);
+
+        app(TaskSynchronizer::class)->syncBoard($this->board);
+
+        // Дубликаты схлопываются: портал повторяет наблюдателя, если он
+        // указан и вручную, и через подписку на проект.
+        $this->assertSame([77, 88], TaskCard::first()->auditor_ids);
+    }
+
     public function test_повторная_синхронизация_не_плодит_карточки(): void
     {
         $this->fakeList([$this->task(1, 'Свёрстать форму')]);

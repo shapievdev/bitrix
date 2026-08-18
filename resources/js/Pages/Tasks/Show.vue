@@ -5,6 +5,7 @@ import { syncFrameHeight } from '../../bitrix'
 const props = defineProps({
     taskId: { type: Number, required: true },
     card: { type: Object, default: null },
+    forbidden: { type: Boolean, default: false },
     columns: { type: Array, default: () => [] },
     departments: { type: Array, default: () => [] },
     priorities: { type: Array, default: () => [] },
@@ -24,7 +25,17 @@ function save(payload) {
 
 <template>
     <div class="p-4">
-        <div v-if="!card" class="rounded-lg border border-dashed border-slate-300 p-6 text-center">
+        <div v-if="forbidden" class="rounded-lg border border-dashed border-slate-300 p-6 text-center">
+            <p class="text-sm text-slate-500">
+                Задача #{{ taskId }} вам не доступна.
+            </p>
+            <p class="mt-1 text-xs text-slate-400">
+                На доске видны задачи, в которых вы участвуете, — как исполнитель,
+                соисполнитель, наблюдатель или постановщик.
+            </p>
+        </div>
+
+        <div v-else-if="!card" class="rounded-lg border border-dashed border-slate-300 p-6 text-center">
             <p class="text-sm text-slate-500">
                 Задача #{{ taskId }} не попала ни на одну доску.
             </p>

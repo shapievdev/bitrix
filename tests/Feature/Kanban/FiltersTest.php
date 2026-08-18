@@ -102,9 +102,11 @@ class FiltersTest extends TestCase
 
     protected function open(array $query = []): TestResponse
     {
+        // Администратор: проверяются фильтры, а не права. Видимость
+        // рядового сотрудника разобрана в VisibilityTest.
         $user = PortalUser::firstOrCreate(
             ['portal_id' => $this->portal->id, 'bitrix_user_id' => 1],
-            ['name' => 'Иван Петров'],
+            ['name' => 'Иван Петров', 'is_admin' => true],
         );
 
         return $this

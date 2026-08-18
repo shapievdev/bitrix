@@ -7,6 +7,7 @@ use App\Models\TaskCard;
 use App\Models\TaskPriority;
 use App\Services\Kanban\CardMover;
 use App\Services\Kanban\TaskSynchronizer;
+use App\Services\Kanban\TaskVisibility;
 use App\Support\PortalContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,8 @@ use Inertia\Response;
  */
 class TaskCardController extends Controller
 {
+    public function __construct(protected TaskVisibility $visibility) {}
+
     public function show(int $taskId, TaskSynchronizer $synchronizer): Response
     {
         $card = TaskCard::query()
@@ -40,8 +43,18 @@ class TaskCardController extends Controller
                 ->first();
         }
 
+        // Задача есть, но смотрящий в ней не участвует. Показываем это
+        // прямо, а не пустотой: «не попала на доску» здесь было бы
+        // неправдой и отправило бы человека чинить фильтр доски.
+        $forbidden = $card !== null && ! $this->visibility->allows(PortalContext::user(), $card);
+
+        if ($forbidden) {
+            $card = null;
+        }
+
         return Inertia::render('Tasks/Show', [
             'taskId' => $taskId,
+            'forbidden' => $forbidden,
 
             'card' => $card ? [
                 'id' => $card->id,
@@ -75,6 +88,8 @@ class TaskCardController extends Controller
      */
     public function update(Request $request, TaskCard $card, CardMover $mover): RedirectResponse
     {
+        abort_unless($this->visibility->allows(PortalContext::user(), $card), 403);
+
         $validated = $request->validate([
             'column_id' => ['nullable', 'integer'],
             'department_id' => ['nullable', 'integer'],

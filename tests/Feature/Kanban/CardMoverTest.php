@@ -228,6 +228,54 @@ class CardMoverTest extends TestCase
         $this->assertSame(0, CardTransition::count());
     }
 
+    public function test_смена_колонки_начинает_отсчёт_времени_на_этапе_заново(): void
+    {
+        $todo = $this->column('Надо', 0);
+        $doing = $this->column('Делаем', 1);
+
+        $card = $this->card($todo, 'Первая', 0, 1);
+        $card->forceFill(['entered_column_at' => now()->subDays(3)])->save();
+
+        $this->mover->move($card, $doing);
+
+        $this->assertTrue($card->fresh()->entered_column_at->isAfter(now()->subMinute()));
+    }
+
+    public function test_сортировка_внутри_колонки_отсчёт_не_сбрасывает(): void
+    {
+        $todo = $this->column('Надо', 0);
+
+        $first = $this->card($todo, 'Первая', 0, 1);
+        $this->card($todo, 'Вторая', 1, 2);
+
+        $entered = now()->subDays(3);
+        $first->forceFill(['entered_column_at' => $entered])->save();
+
+        // Перетаскивание внутри той же колонки — это сортировка, а не
+        // новый этап: счётчик обязан продолжать идти.
+        $this->mover->move($first, $todo, position: 1);
+
+        $this->assertSame(
+            $entered->toDateTimeString(),
+            $first->fresh()->entered_column_at->toDateTimeString(),
+        );
+    }
+
+    public function test_статус_из_битрикса_кладёт_карточку_наверх_колонки(): void
+    {
+        $todo = $this->column('Надо', 0);
+        $doing = $this->column('Делаем', 1, 3);
+
+        $this->card($doing, 'Уже там', 0, 1);
+        $this->card($doing, 'И там', 1, 2);
+
+        $moved = $this->card($todo, 'Приехала по статусу', 0, 3);
+
+        $this->mover->syncFromStatus($moved, 3);
+
+        $this->assertSame(0, $moved->fresh()->position);
+    }
+
     public function test_нельзя_перенести_в_колонку_чужой_доски(): void
     {
         $todo = $this->column('Надо', 0);

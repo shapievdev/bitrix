@@ -45,17 +45,19 @@ class CardMover
         $source = $card->column;
         $enteredAt = $card->enteredColumnAt();
 
-        DB::transaction(function () use ($card, $target, $position, $actor, $source, $enteredAt) {
+        $changedColumn = $source?->id !== $target->id;
+
+        DB::transaction(function () use ($card, $target, $position, $actor, $source, $enteredAt, $changedColumn) {
             // Блокируем карточки обеих колонок: два одновременных
             // перетаскивания иначе выдадут двум карточкам одну позицию.
             $this->lockColumns(array_unique(array_filter([$source?->id, $target->id])));
 
             $this->detach($card);
-            $this->insert($card, $target, $position);
+            $this->insert($card, $target, $position, $changedColumn);
 
             // Перемещение внутри колонки историей не считаем — иначе отчёт
             // о времени на этапе будет обнуляться при любой сортировке.
-            if ($source?->id !== $target->id) {
+            if ($changedColumn) {
                 CardTransition::create([
                     'portal_id' => $card->portal_id,
                     'task_card_id' => $card->id,
@@ -107,9 +109,13 @@ class CardMover
             return $card;
         }
 
+        // Наверх колонки, как и новая задача: карточку сюда не перетаскивали
+        // руками, её привёл статус из портала — значит это свежее событие,
+        // и прятать его в хвосте стопки незачем.
+        //
         // pushToBitrix отключён намеренно: статус пришёл оттуда, отправлять
         // его обратно — прямой путь к бесконечному циклу событий.
-        return $this->move($card, $target, pushToBitrix: false);
+        return $this->move($card, $target, position: 0, pushToBitrix: false);
     }
 
     /**
@@ -206,8 +212,11 @@ class CardMover
 
     /**
      * Раздвинуть карточки и вписать нашу.
+     *
+     * @param  bool  $changedColumn  Сменилась ли колонка — от этого зависит,
+     *                               заново ли начинать отсчёт времени на этапе.
      */
-    protected function insert(TaskCard $card, BoardColumn $target, ?int $position): void
+    protected function insert(TaskCard $card, BoardColumn $target, ?int $position, bool $changedColumn = false): void
     {
         $count = TaskCard::query()
             ->where('board_column_id', $target->id)
@@ -225,7 +234,7 @@ class CardMover
         $card->forceFill([
             'board_column_id' => $target->id,
             'position' => $position,
-        ])->save();
+        ] + ($changedColumn ? ['entered_column_at' => now()] : []))->save();
     }
 
     /**

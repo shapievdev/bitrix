@@ -112,6 +112,9 @@ class PortalDictionaries
             $attributes = [
                 'name' => trim((string) ($node['NAME'] ?? "Отдел #{$bitrixId}")),
                 'bitrix_parent_id' => ($node['PARENT'] ?? null) ? (int) $node['PARENT'] : null,
+                // Руководитель подразделения: на нём держится видимость
+                // задач отдела для того, кто им руководит.
+                'head_id' => ($node['UF_HEAD'] ?? null) ? (int) $node['UF_HEAD'] : null,
                 'position' => $position++,
             ];
 

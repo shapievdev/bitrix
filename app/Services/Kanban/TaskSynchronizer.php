@@ -31,7 +31,7 @@ class TaskSynchronizer
     protected const FIELDS = [
         'ID', 'TITLE', 'STATUS', 'PRIORITY', 'RESPONSIBLE_ID',
         'CREATED_BY', 'DEADLINE', 'CLOSED_DATE', 'GROUP_ID', 'ACCOMPLICES',
-        'CHANGED_DATE', 'TAGS',
+        'AUDITORS', 'CHANGED_DATE', 'TAGS',
     ];
 
     public function __construct(
@@ -252,13 +252,23 @@ class TaskSynchronizer
         $attributes = $this->attributesFrom($task);
         $primaryId = $this->departments->primaryFor($attributes['responsible_id']);
 
+        // Новая задача встаёт наверх колонки, а не в конец: внизу под
+        // сотней старых карточек её никто не заметит, а свежая постановка
+        // — ровно то, на что надо смотреть первым делом. Расставленный
+        // руками порядок при этом сохраняется: карточки просто сдвигаются
+        // на позицию вниз, их взаимный порядок не меняется.
+        TaskCard::query()
+            ->where('board_column_id', $column->id)
+            ->increment('position');
+
         $card = $board->cards()->create($attributes + [
             'portal_id' => $board->portal_id,
             'board_column_id' => $column->id,
             'department_id' => $primaryId,
             'task_priority_id' => $this->priorityFor($attributes['priority'], $priorities)?->id,
             'bitrix_task_id' => (int) ($task['id'] ?? $task['ID']),
-            'position' => $board->cards()->where('board_column_id', $column->id)->count(),
+            'position' => 0,
+            'entered_column_at' => now(),
         ]);
 
         $this->syncDepartments($card, $task);
@@ -300,13 +310,37 @@ class TaskSynchronizer
      */
     protected function accomplicesOf(array $task): array
     {
-        $raw = $task['accomplices'] ?? $task['ACCOMPLICES'] ?? [];
+        return $this->peopleField($task, 'accomplices', 'ACCOMPLICES');
+    }
+
+    /**
+     * Наблюдатели задачи.
+     *
+     * На отделы не влияют — наблюдатель за работой следит, но её не
+     * выполняет. Нужны только для видимости: спрятать от наблюдателя
+     * задачу, на которую его подписали, было бы странно.
+     *
+     * @return array<int>
+     */
+    protected function auditorsOf(array $task): array
+    {
+        return $this->peopleField($task, 'auditors', 'AUDITORS');
+    }
+
+    /**
+     * Список идентификаторов сотрудников из поля задачи.
+     *
+     * @return array<int>
+     */
+    protected function peopleField(array $task, string $camel, string $upper): array
+    {
+        $raw = $task[$camel] ?? $task[$upper] ?? [];
 
         if (! is_array($raw)) {
             return [];
         }
 
-        return array_values(array_filter(array_map('intval', $raw)));
+        return array_values(array_unique(array_filter(array_map('intval', $raw))));
     }
 
     /**
@@ -405,6 +439,7 @@ class TaskSynchronizer
             'title' => (string) ($get('title', 'TITLE') ?? 'Без названия'),
             'responsible_id' => $this->toId($get('responsibleId', 'RESPONSIBLE_ID')),
             'accomplice_ids' => $this->accomplicesOf($task),
+            'auditor_ids' => $this->auditorsOf($task),
             'creator_id' => $this->toId($get('createdBy', 'CREATED_BY')),
             'bitrix_status' => $this->toId($get('status', 'STATUS')),
             // Не через toId: там ноль означает «не задано», а у приоритета

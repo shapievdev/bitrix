@@ -10,6 +10,7 @@ use App\Models\TaskCard;
 use App\Models\TaskPriority;
 use App\Services\Kanban\BoardBuilder;
 use App\Services\Kanban\TaskSynchronizer;
+use App\Services\Kanban\TaskVisibility;
 use App\Support\PortalContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -34,9 +35,11 @@ class BoardController extends Controller
         return redirect()->route('app.boards.show', $board);
     }
 
-    public function show(Request $request, Board $board): Response
+    public function show(Request $request, Board $board, TaskVisibility $visibility): Response
     {
         $board->load('columns');
+
+        $viewer = PortalContext::user();
 
         $all = Department::query()->orderBy('name')->get();
 
@@ -50,6 +53,7 @@ class BoardController extends Controller
 
         $cards = $board->cards()
             ->with(['priorityLevel', 'departments'])
+            ->tap(fn ($query) => $visibility->apply($query, $viewer))
             ->when($scopeIds, fn ($query) => $query->whereHas(
                 'departments',
                 fn ($q) => $q->whereIn('departments.id', $scopeIds),
@@ -63,8 +67,10 @@ class BoardController extends Controller
         $people = $this->peopleFor($cards);
 
         // Счётчики по всему дереву — они не должны зависеть от текущего
-        // выбора, иначе панель слева схлопывается до одного пункта.
-        $counts = $this->cardCounts($board, $all);
+        // выбора, иначе панель слева схлопывается до одного пункта. Но от
+        // видимости зависеть обязаны: иначе сотрудник видит в панели
+        // «Финансовый департамент — 340», открывает и получает три задачи.
+        $counts = $this->cardCounts($board, $visibility, $viewer);
 
         $primary = $all->where('is_primary', true)->values();
         $parentForUnits = $selectedNode?->is_primary
@@ -76,10 +82,21 @@ class BoardController extends Controller
                 'id' => $board->id,
                 'name' => $board->name,
                 'syncedAt' => $board->synced_at?->diffForHumans(),
-                // Счётчик «Все задачи» — тоже без завершённых.
+                // Счётчик «Все задачи» — тоже без завершённых и тоже
+                // только по видимым.
                 'total' => $board->cards()
+                    ->tap(fn ($query) => $visibility->apply($query, $viewer))
                     ->whereHas('column', fn ($q) => $q->where('is_final', false))
                     ->count(),
+            ],
+
+            // Интерфейсу нужно знать, широкий ли обзор у смотрящего:
+            // подпись «мои задачи» на доске из трёх карточек объясняет,
+            // почему их три, и снимает половину вопросов.
+            'viewer' => [
+                'name' => $viewer?->name,
+                'isAdmin' => $visibility->isUnrestricted($viewer),
+                'headsDepartments' => $visibility->headDepartmentIds($viewer) !== [],
             ],
 
             'departments' => $primary->map(fn (Department $d) => [
@@ -117,6 +134,10 @@ class BoardController extends Controller
                 'title' => $card->title,
                 'deadline' => $card->deadline?->format('d.m.Y'),
                 'isOverdue' => $card->isOverdue(),
+                // Момент попадания в текущую колонку. Отдаём меткой
+                // времени, а не готовой подписью: счётчик на доске должен
+                // идти сам, не дожидаясь перезагрузки страницы.
+                'enteredAt' => $card->enteredColumnAt()?->toIso8601String(),
                 'priority' => $card->priorityLevel ? [
                     'name' => $card->priorityLevel->name,
                     'color' => $card->priorityLevel->color,
@@ -138,18 +159,23 @@ class BoardController extends Controller
 
             // Исполнители только те, чьи задачи вообще есть на доске —
             // список всех сотрудников портала здесь бесполезен.
-            'responsibles' => $this->responsibles($board),
+            'responsibles' => $this->responsibles($board, $visibility, $viewer),
         ]);
     }
 
     /**
      * Исполнители задач доски.
      *
+     * Считаем по видимым задачам: иначе фильтр предлагает выбрать
+     * сотрудника, задач которого смотрящий всё равно не увидит, и
+     * заодно раскрывает состав чужих отделов.
+     *
      * @return array<int, array{id: int, name: string}>
      */
-    protected function responsibles(Board $board): array
+    protected function responsibles(Board $board, TaskVisibility $visibility, ?PortalUser $viewer): array
     {
         $ids = $board->cards()->whereNotNull('responsible_id')
+            ->tap(fn ($query) => $visibility->apply($query, $viewer))
             ->distinct()
             ->pluck('responsible_id');
 
@@ -230,15 +256,21 @@ class BoardController extends Controller
      *
      * @return array<int, int>
      */
-    protected function cardCounts(Board $board, Collection $all): array
+    protected function cardCounts(Board $board, TaskVisibility $visibility, ?PortalUser $viewer): array
     {
+        // Видимые карточки — подзапросом, а не списком идентификаторов:
+        // у администратора на активной доске их тысячи, и тащить их в
+        // память ради счётчиков незачем.
+        $visible = TaskCard::query()
+            ->select('task_cards.id')
+            ->where('board_id', $board->id)
+            ->whereHas('column', fn ($q) => $q->where('is_final', false))
+            ->tap(fn ($query) => $visibility->apply($query, $viewer));
+
         return DB::table('department_task_card')
-            ->join('task_cards', 'task_cards.id', '=', 'department_task_card.task_card_id')
-            ->join('board_columns', 'board_columns.id', '=', 'task_cards.board_column_id')
-            ->where('task_cards.board_id', $board->id)
-            ->where('board_columns.is_final', false)
-            ->groupBy('department_task_card.department_id')
-            ->selectRaw('department_task_card.department_id, count(distinct task_cards.id) as total')
+            ->whereIn('task_card_id', $visible)
+            ->groupBy('department_id')
+            ->selectRaw('department_id, count(distinct task_card_id) as total')
             ->pluck('total', 'department_id')
             ->all();
     }
