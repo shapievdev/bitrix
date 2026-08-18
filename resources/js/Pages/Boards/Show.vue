@@ -413,7 +413,9 @@ function sync() {
                     </div>
                 </header>
 
-                <div class="flex flex-1 gap-4 overflow-x-auto px-4 pb-4">
+                <!-- overscroll-x-contain не даёт свайпу у края доски уйти в
+                     навигацию браузера «назад» вместо прокрутки колонок. -->
+                <div class="flex flex-1 gap-4 overflow-x-auto overscroll-x-contain px-4 pb-4">
                     <div
                         v-for="(column, index) in columns"
                         :key="column.id"
@@ -461,12 +463,25 @@ function sync() {
                             </form>
                         </div>
 
+                        <!-- overflow-x-hidden обязателен, а не для красоты:
+                             при overflow-y-auto вторая ось по правилам CSS
+                             тоже становится auto, колонка превращается в
+                             горизонтальный скроллер без хода, и жест влево
+                             вправо залипает на ней вместо прокрутки доски.
+
+                             delay с delayOnTouchOnly оставляет мышке
+                             мгновенное перетаскивание, а пальцу даёт сначала
+                             проскроллить: иначе свайп по карточкам тащит
+                             карточку, а доска стоит. -->
                         <draggable
                             v-model="stacks[column.id]"
                             :group="`board-${board.id}`"
                             item-key="id"
-                            class="flex flex-1 flex-col gap-2 overflow-y-auto pt-2"
+                            class="flex flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-y-contain pt-2"
                             ghost-class="opacity-40"
+                            :delay="150"
+                            :delay-on-touch-only="true"
+                            :touch-start-threshold="8"
                             @change="onChange(column.id, $event)"
                         >
                             <template #item="{ element }">
