@@ -1,7 +1,8 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { formatMoment, formatSince, useNow } from '../duration'
 
-defineProps({
+const props = defineProps({
     card: { type: Object, required: true },
     priorities: { type: Array, default: () => [] },
 })
@@ -9,6 +10,12 @@ defineProps({
 const emit = defineEmits(['open', 'priority'])
 
 const picking = ref(false)
+
+const now = useNow()
+
+// Сколько карточка лежит на текущем этапе.
+const stageAge = computed(() => formatSince(props.card.enteredAt, now.value))
+const stageSince = computed(() => formatMoment(props.card.enteredAt))
 
 function choose(priorityId) {
     picking.value = false
@@ -77,6 +84,20 @@ function choose(priorityId) {
             </span>
             <span v-else class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-slate-400">
                 Без срока
+            </span>
+
+            <!-- Сколько задача стоит на этом этапе. Часы рядом с цифрой
+                 нужны, чтобы её не спутали со сроком слева. -->
+            <span
+                v-if="stageAge"
+                class="flex items-center gap-1 rounded-sm bg-slate-100 px-1.5 py-0.5 text-slate-500"
+                :title="stageSince ? `На этапе с ${stageSince}` : 'Время на текущем этапе'"
+            >
+                <svg class="size-3 shrink-0" viewBox="0 0 12 12" fill="none">
+                    <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2" />
+                    <path d="M6 3.5V6l1.75 1.25" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                {{ stageAge }}
             </span>
 
             <span class="text-slate-300">#{{ card.taskId }}</span>
