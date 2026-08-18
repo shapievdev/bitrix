@@ -274,6 +274,54 @@ class VisibilityTest extends TestCase
         $this->assertSame(['Моя'], $this->titlesFrom($this->openAs($worker, ['mine' => 1])));
     }
 
+    public function test_задача_в_нескольких_отделах_считается_один_раз(): void
+    {
+        $admin = $this->person(1, 'Администратор', admin: true);
+
+        $second = Department::create([
+            'portal_id' => $this->portal->id,
+            'parent_id' => $this->department->id,
+            'name' => 'Поддержка',
+        ]);
+
+        // Одна задача с участниками из разных отделов привязана сразу к
+        // департаменту и к двум его отделам. Раньше счётчик складывал
+        // числа по узлам и показывал три задачи вместо одной.
+        $card = $this->card('Общая на весь департамент', ['responsible_id' => 99]);
+        $card->departments()->attach([$this->unit->id, $second->id], [
+            'portal_id' => $this->portal->id,
+            'source' => 'accomplice',
+        ]);
+
+        $props = $this->openAs($admin)->viewData('page')['props'];
+
+        $this->assertSame(1, $props['departments'][0]['count']);
+        $this->assertSame(1, $props['board']['total']);
+    }
+
+    public function test_счётчик_отдела_совпадает_с_доской_после_клика(): void
+    {
+        $admin = $this->person(1, 'Администратор', admin: true);
+
+        $card = $this->card('Через два отдела', ['responsible_id' => 99]);
+        $card->departments()->attach($this->unit->id, [
+            'portal_id' => $this->portal->id,
+            'source' => 'accomplice',
+        ]);
+
+        $this->card('Только в департаменте', ['responsible_id' => 98]);
+
+        $props = $this->openAs($admin)->viewData('page')['props'];
+        $counter = $props['departments'][0]['count'];
+
+        // Кликаем по тому же узлу и сравниваем с тем, что реально легло
+        // на доску: расхождение здесь и было исходной жалобой.
+        $onBoard = $this->titlesFrom($this->openAs($admin, ['department' => $this->department->id]));
+
+        $this->assertSame(2, $counter);
+        $this->assertCount($counter, $onBoard);
+    }
+
     public function test_чужую_задачу_нельзя_переместить(): void
     {
         $worker = $this->person(10, 'Исполнитель');

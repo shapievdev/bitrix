@@ -255,13 +255,19 @@ class BoardController extends Controller
     }
 
     /**
-     * Сколько активных задач у каждого узла.
+     * Карточки каждого узла — наборами идентификаторов, а не числами.
+     *
+     * Числа складывать нельзя: одна задача принадлежит сразу нескольким
+     * отделам, и сумма по поддереву считала её столько раз, ко скольким
+     * отделам она привязана. На живых данных это давало «18» там, где
+     * задач было три. Наборы объединяются, поэтому задача с девятью
+     * участниками из восьми отделов остаётся одной задачей.
      *
      * Завершённые в счётчиках не участвуют: их количество растёт вечно и
      * быстро перестаёт что-либо значить — руководителю нужна текущая
      * нагрузка отдела, а не архив за всё время.
      *
-     * @return array<int, int>
+     * @return array<int, array<int, true>> id отдела => набор id карточек
      */
     protected function cardCounts(
         Board $board,
@@ -278,12 +284,18 @@ class BoardController extends Controller
             ->whereHas('column', fn ($q) => $q->where('is_final', false))
             ->tap(fn ($query) => $visibility->apply($query, $viewer, $onlyMine));
 
-        return DB::table('department_task_card')
+        $byDepartment = [];
+
+        DB::table('department_task_card')
             ->whereIn('task_card_id', $visible)
-            ->groupBy('department_id')
-            ->selectRaw('department_id, count(distinct task_card_id) as total')
-            ->pluck('total', 'department_id')
-            ->all();
+            ->select('department_id', 'task_card_id')
+            ->orderBy('department_id')
+            ->orderBy('task_card_id')
+            ->each(function (object $row) use (&$byDepartment) {
+                $byDepartment[(int) $row->department_id][(int) $row->task_card_id] = true;
+            });
+
+        return $byDepartment;
     }
 
     /**
@@ -337,23 +349,29 @@ class BoardController extends Controller
     }
 
     /**
-     * @param  array<int, int>  $counts
+     * Сколько разных задач в узле и всех вложенных.
+     *
+     * Именно разных: задача, привязанная и к департаменту, и к трём его
+     * отделам сразу, — одна задача, а не четыре. Число обязано совпасть с
+     * тем, что человек увидит, кликнув по этому узлу.
+     *
+     * @param  array<int, array<int, true>>  $counts
      */
     protected function subtreeCount(Department $node, Collection $all, array $counts): int
     {
-        $total = 0;
+        $cards = [];
 
         foreach ($node->subtreeIds($all) as $id) {
-            $total += $counts[$id] ?? 0;
+            $cards += $counts[$id] ?? [];
         }
 
-        return $total;
+        return count($cards);
     }
 
     /**
      * Плоский список отделов департамента с уровнем вложенности.
      *
-     * @param  array<int, int>  $counts
+     * @param  array<int, array<int, true>>  $counts
      * @return array<int, array<string, mixed>>
      */
     protected function flattenUnits(Department $parent, Collection $all, array $counts, int $depth = 0): array
