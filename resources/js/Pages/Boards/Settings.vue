@@ -1,7 +1,8 @@
 <script setup>
 import AppLayout from '../../Layouts/AppLayout.vue'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
+import draggable from 'vuedraggable'
 
 const props = defineProps({
     board: { type: Object, required: true },
@@ -43,6 +44,21 @@ const importDepartments = () =>
 
 const statusLabel = (value) =>
     props.bitrixStatuses.find((s) => s.value === value)?.label ?? '—'
+
+// Порядок колонок правится перетаскиванием. Локальная копия нужна,
+// чтобы строка вставала на новое место сразу, не дожидаясь ответа.
+const orderedColumns = ref([...props.columns])
+
+watch(() => props.columns, (value) => {
+    orderedColumns.value = [...value]
+})
+
+const saveColumnOrder = () =>
+    router.patch(
+        route('app.columns.reorder', props.board.id),
+        { ids: orderedColumns.value.map((c) => c.id) },
+        { preserveScroll: true, preserveState: true },
+    )
 </script>
 
 <template>
@@ -154,48 +170,65 @@ const statusLabel = (value) =>
                     больше, чем штатных статусов.
                 </p>
 
+                <p class="text-xs text-slate-500">
+                    Порядок колонок — как на доске. Перетащите строку за
+                    <span class="text-slate-400">⠿</span> слева, чтобы поменять.
+                </p>
+
                 <div class="rounded-lg border border-slate-200 bg-white">
-                    <div
-                        v-for="c in columns"
-                        :key="c.id"
-                        class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0"
+                    <draggable
+                        v-model="orderedColumns"
+                        item-key="id"
+                        handle=".column-grip"
+                        ghost-class="opacity-40"
+                        @end="saveColumnOrder"
                     >
-                        <input
-                            type="color"
-                            :value="c.color"
-                            class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-                            @change="patch('app.columns.update', c.id, { name: c.name, color: $event.target.value })"
-                        >
-                        <input
-                            type="text"
-                            :value="c.name"
-                            class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
-                            @blur="patch('app.columns.update', c.id, { name: $event.target.value, color: c.color })"
-                        >
-                        <select
-                            class="rounded border border-slate-200 px-1.5 py-1 text-xs"
-                            :value="c.bitrixStatus ?? ''"
-                            @change="patch('app.columns.update', c.id, { name: c.name, color: c.color, bitrix_status: $event.target.value || null })"
-                        >
-                            <option value="">без статуса</option>
-                            <option v-for="s in bitrixStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
-                        </select>
-                        <input
-                            type="number"
-                            :value="c.wipLimit"
-                            min="0"
-                            title="Предел незавершённой работы, 0 — без ограничения"
-                            class="w-16 rounded border border-slate-200 px-1.5 py-1 text-xs"
-                            @blur="patch('app.columns.update', c.id, { name: c.name, color: c.color, wip_limit: $event.target.value })"
-                        >
-                        <button
-                            type="button"
-                            class="text-xs text-slate-400 transition hover:text-red-600"
-                            @click="remove('app.columns.destroy', c.id)"
-                        >
-                            удалить
-                        </button>
-                    </div>
+                        <template #item="{ element: c }">
+                            <div class="flex items-center gap-3 border-b border-slate-100 px-3 py-2 last:border-0">
+                                <button
+                                    type="button"
+                                    class="column-grip -ml-1 cursor-grab px-1 text-slate-300 transition hover:text-slate-500 active:cursor-grabbing"
+                                    title="Перетащите, чтобы изменить порядок"
+                                >
+                                    <svg class="size-4" viewBox="0 0 16 16" fill="currentColor">
+                                        <circle cx="6" cy="4" r="1.3" />
+                                        <circle cx="10" cy="4" r="1.3" />
+                                        <circle cx="6" cy="8" r="1.3" />
+                                        <circle cx="10" cy="8" r="1.3" />
+                                        <circle cx="6" cy="12" r="1.3" />
+                                        <circle cx="10" cy="12" r="1.3" />
+                                    </svg>
+                                </button>
+                                <input
+                                    type="color"
+                                    :value="c.color"
+                                    class="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                                    @change="patch('app.columns.update', c.id, { name: c.name, color: $event.target.value })"
+                                >
+                                <input
+                                    type="text"
+                                    :value="c.name"
+                                    class="flex-1 rounded border border-transparent px-2 py-1 text-sm hover:border-slate-300 focus:border-slate-400 focus:outline-none"
+                                    @blur="patch('app.columns.update', c.id, { name: $event.target.value, color: c.color })"
+                                >
+                                <select
+                                    class="rounded border border-slate-200 px-1.5 py-1 text-xs"
+                                    :value="c.bitrixStatus ?? ''"
+                                    @change="patch('app.columns.update', c.id, { name: c.name, color: c.color, bitrix_status: $event.target.value || null })"
+                                >
+                                    <option value="">без статуса</option>
+                                    <option v-for="s in bitrixStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                </select>
+                                <button
+                                    type="button"
+                                    class="text-xs text-slate-400 transition hover:text-red-600"
+                                    @click="remove('app.columns.destroy', c.id)"
+                                >
+                                    удалить
+                                </button>
+                            </div>
+                        </template>
+                    </draggable>
                 </div>
 
                 <form class="flex gap-2" @submit.prevent="addColumn">

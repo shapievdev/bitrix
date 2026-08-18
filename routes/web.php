@@ -81,6 +81,7 @@ Route::middleware([ResolveBitrixPortal::class, BitrixFrameHeaders::class])
         Route::delete('priorities/{priority}', [DictionaryController::class, 'destroyPriority'])->name('priorities.destroy');
 
         Route::post('boards/{board}/columns', [DictionaryController::class, 'storeColumn'])->name('columns.store');
+        Route::patch('boards/{board}/columns/order', [DictionaryController::class, 'reorderColumns'])->name('columns.reorder');
         Route::patch('columns/{column}', [DictionaryController::class, 'updateColumn'])->name('columns.update');
         Route::delete('columns/{column}', [DictionaryController::class, 'destroyColumn'])->name('columns.destroy');
     });

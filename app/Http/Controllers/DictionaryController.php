@@ -11,6 +11,7 @@ use App\Services\Kanban\PortalDictionaries;
 use App\Support\PortalContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -124,9 +125,11 @@ class DictionaryController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:60'],
             'color' => ['nullable', 'string', 'max:16'],
-            'weight' => ['required', 'integer', 'min:0', 'max:1000'],
+            'weight' => ['nullable', 'integer', 'min:0', 'max:1000'],
             'bitrix_priority' => ['nullable', 'integer', 'min:0', 'max:2'],
         ]);
+
+        $data = $this->zeroInsteadOfNull($data, ['weight']);
 
         TaskPriority::create($data + ['portal_id' => PortalContext::portalOrFail()->id]);
 
@@ -138,10 +141,12 @@ class DictionaryController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:60'],
             'color' => ['nullable', 'string', 'max:16'],
-            'weight' => ['required', 'integer', 'min:0', 'max:1000'],
+            'weight' => ['nullable', 'integer', 'min:0', 'max:1000'],
             'bitrix_priority' => ['nullable', 'integer', 'min:0', 'max:2'],
             'is_default' => ['nullable', 'boolean'],
         ]);
+
+        $data = $this->zeroInsteadOfNull($data, ['weight']);
 
         if ($request->boolean('is_default')) {
             TaskPriority::query()->where('id', '!=', $priority->id)->update(['is_default' => false]);
@@ -170,6 +175,8 @@ class DictionaryController extends Controller
             'wip_limit' => ['nullable', 'integer', 'min:0', 'max:999'],
         ]);
 
+        $data = $this->zeroInsteadOfNull($data, ['wip_limit']);
+
         $board->columns()->create($data + [
             'portal_id' => $board->portal_id,
             'position' => (int) $board->columns()->max('position') + 1,
@@ -178,17 +185,55 @@ class DictionaryController extends Controller
         return back()->with('success', 'Колонка добавлена.');
     }
 
+    /**
+     * Переставить колонки в заданном порядке.
+     *
+     * Порядок приходит списком идентификаторов — так его задаёт
+     * перетаскивание. Ввод позиции числом руками не выжил: цифры в поле
+     * никак не связаны с тем, что человек видит на доске, и первый же
+     * вопрос про них был «а зачем это вообще».
+     */
+    public function reorderColumns(Request $request, Board $board): RedirectResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $own = $board->columns()->pluck('id')->all();
+        $sent = array_map('intval', $data['ids']);
+
+        // Принимаем только полный набор колонок доски. Неполный список
+        // оставил бы дыры в позициях, а чужие идентификаторы — тихо
+        // переставили бы колонки соседней доски.
+        if (array_diff($own, $sent) !== [] || array_diff($sent, $own) !== []) {
+            return back()->with('error', 'Порядок не совпадает с колонками доски — обновите страницу.');
+        }
+
+        DB::transaction(function () use ($board, $sent) {
+            foreach ($sent as $position => $id) {
+                $board->columns()->whereKey($id)->update(['position' => $position]);
+            }
+        });
+
+        return back();
+    }
+
     public function updateColumn(Request $request, BoardColumn $column): RedirectResponse
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:60'],
             'color' => ['nullable', 'string', 'max:16'],
-            'position' => ['nullable', 'integer', 'min:0'],
             'bitrix_status' => ['nullable', 'integer', 'min:1', 'max:7'],
             'wip_limit' => ['nullable', 'integer', 'min:0', 'max:999'],
             'is_default' => ['nullable', 'boolean'],
             'is_final' => ['nullable', 'boolean'],
         ]);
+
+        // Пустое поле приходит как null, а колонки в базе NOT NULL: без
+        // этой замены очистка поля роняла запрос пятисоткой. Позиция
+        // здесь не принимается вовсе — для неё есть reorderColumns.
+        $data = $this->zeroInsteadOfNull($data, ['wip_limit']);
 
         if ($request->boolean('is_default')) {
             BoardColumn::query()
@@ -215,6 +260,29 @@ class DictionaryController extends Controller
         $column->delete();
 
         return back()->with('success', 'Колонка удалена.');
+    }
+
+    /**
+     * Заменить null нулём у полей, которых в базе не может не быть.
+     *
+     * Очищенное поле формы приходит пустой строкой, мидлвара превращает
+     * её в null, валидатор пропускает как nullable — и запись падает на
+     * NOT NULL уже в базе, пятисоткой. Для веса и лимита ноль как раз и
+     * означает «не задано», так что подмена честная.
+     *
+     * @param  array<string, mixed>  $data
+     * @param  array<int, string>  $keys
+     * @return array<string, mixed>
+     */
+    protected function zeroInsteadOfNull(array $data, array $keys): array
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $data) && $data[$key] === null) {
+                $data[$key] = 0;
+            }
+        }
+
+        return $data;
     }
 
     /**
