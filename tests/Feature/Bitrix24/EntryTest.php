@@ -102,6 +102,30 @@ class EntryTest extends TestCase
         $this->assertSame('access-token-second', Portal::first()->access_token);
     }
 
+    public function test_вход_из_iframe_не_затирает_application_token(): void
+    {
+        $this->fakeHandshake();
+
+        $portal = Portal::create([
+            'member_id' => 'member-123',
+            'domain' => 'example.bitrix24.ru',
+            'kind' => 'cloud',
+            'access_token' => 'access',
+            'refresh_token' => 'refresh',
+            'token_expires_at' => now()->addHour(),
+            'application_token' => 'настоящий-токен-установки',
+            'is_active' => true,
+            'installed_at' => now(),
+        ]);
+
+        // APP_SID приходит с каждым открытием фрейма и каждый раз новый.
+        // Раньше он попадал в application_token, и события портала
+        // начинали отклоняться сразу после первого входа сотрудника.
+        $this->post('/', $this->placementPayload(['APP_SID' => 'случайный-сид-фрейма']));
+
+        $this->assertSame('настоящий-токен-установки', $portal->fresh()->application_token);
+    }
+
     public function test_вход_без_токенов_отклоняется(): void
     {
         $this->post('/', ['PLACEMENT' => 'DEFAULT'])->assertForbidden();

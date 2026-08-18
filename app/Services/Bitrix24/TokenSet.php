@@ -41,6 +41,12 @@ readonly class TokenSet
 
     /**
      * POST-параметры входа в iframe: AUTH_ID, REFRESH_ID, AUTH_EXPIRES.
+     *
+     * application_token здесь взять неоткуда: APP_SID — идентификатор
+     * конкретного открытия фрейма, он меняется при каждом входе и к
+     * подписи событий отношения не имеет. Принимать его за
+     * application_token нельзя — он затирает настоящий, и портал теряет
+     * возможность доказать подлинность своих событий.
      */
     public static function fromPlacementRequest(array $data): self
     {
@@ -50,7 +56,6 @@ readonly class TokenSet
             expiresAt: now()->addSeconds((int) ($data['AUTH_EXPIRES'] ?? 3600)),
             memberId: $data['member_id'] ?? null,
             domain: $data['DOMAIN'] ?? null,
-            applicationToken: $data['APP_SID'] ?? null,
         );
     }
 
