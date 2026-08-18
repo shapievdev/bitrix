@@ -1,11 +1,12 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Link, router, useForm } from '@inertiajs/vue3'
 import draggable from 'vuedraggable'
 import AppLayout from '../../Layouts/AppLayout.vue'
 import { openTask, openTaskForm, resizeFrame } from '../../bitrix'
 import CardTile from '../../Components/CardTile.vue'
 import FilterSelect from '../../Components/FilterSelect.vue'
+import { formatSince, useNow } from '../../duration'
 
 const props = defineProps({
     board: { type: Object, required: true },
@@ -181,9 +182,64 @@ function setPriority(card, priorityId) {
 function sync() {
     syncing.post(route('app.boards.sync', props.board.id), {
         preserveScroll: true,
-        onFinish: () => resizeFrame(),
+        onFinish: () => {
+            lastRefreshed.value = Date.now()
+            resizeFrame()
+        },
     })
 }
+
+/*
+ * Автообновление доски.
+ *
+ * События портала доезжают до базы за секунду, но открытая страница об
+ * этом не знает и показывает снимок на момент загрузки. Поэтому раз в
+ * полминуты перезапрашиваем только данные доски — это чтение из нашей
+ * базы, в Битрикс тут никто не ходит.
+ */
+const AUTO_REFRESH_MS = 30_000
+
+const now = useNow()
+const lastRefreshed = ref(Date.now())
+const dragging = ref(false)
+
+const freshness = computed(() => formatSince(new Date(lastRefreshed.value).toISOString(), now.value))
+
+let autoRefreshTimer = null
+
+function refreshData() {
+    // Во время перетаскивания подменять карточки нельзя — карточка
+    // выпрыгнет из-под курсора. Скрытая вкладка тоже ни к чему: доска
+    // обновится, когда на неё вернутся.
+    if (dragging.value || document.hidden) return
+
+    // Начатую задачу не трогаем: перерисовка сотрёт набранный текст.
+    if (creating.value && newTask.title.trim()) return
+
+    router.reload({
+        only: ['board', 'cards', 'columns', 'departments', 'units', 'responsibles'],
+        preserveScroll: true,
+        preserveState: true,
+        onSuccess: () => {
+            lastRefreshed.value = Date.now()
+        },
+    })
+}
+
+function onVisibilityChange() {
+    // Вернулись на вкладку — незачем ждать очередного тика.
+    if (!document.hidden) refreshData()
+}
+
+onMounted(() => {
+    autoRefreshTimer = setInterval(refreshData, AUTO_REFRESH_MS)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+    clearInterval(autoRefreshTimer)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 </script>
 
 <template>
@@ -199,7 +255,8 @@ function sync() {
                         type="button"
                         class="ml-auto flex size-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
                         :disabled="syncing.processing"
-                        title="Обновить задачи из Битрикс24"
+                        :title="'Полная выкачка задач из Битрикс24' + (board.syncedAt ? ` · последняя ${board.syncedAt}` : '')
+                            + '. Доска и так обновляется сама — эта кнопка нужна, только если данные разошлись с порталом.'"
                         @click="sync"
                     >
                         <svg
@@ -345,7 +402,7 @@ function sync() {
                             {{ selected.name ?? 'Все задачи' }}
                         </h1>
                         <p class="truncate text-[11px] text-slate-400">
-                            {{ cards.length }} на доске · {{ scopeHint }}<span v-if="board.syncedAt"> · {{ board.syncedAt }}</span>
+                            {{ cards.length }} на доске · {{ scopeHint }}<span v-if="freshness"> · обновлено {{ freshness }}</span>
                         </p>
                     </div>
 
@@ -514,6 +571,8 @@ function sync() {
                             :delay-on-touch-only="true"
                             :touch-start-threshold="8"
                             @change="onChange(column.id, $event)"
+                            @start="dragging = true"
+                            @end="dragging = false"
                         >
                             <template #item="{ element }">
                                 <CardTile
