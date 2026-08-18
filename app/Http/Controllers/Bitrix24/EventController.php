@@ -50,10 +50,14 @@ class EventController extends Controller
             ->first();
 
         if (! $portal || ! $this->tokenMatches($portal, $auth['application_token'] ?? null)) {
+            // Отпечатки, а не сами токены: по ним видно, разошлись ли
+            // значения или токена нет вовсе, но подобрать секрет нельзя.
             Log::warning('Bitrix24: событие с неверным application_token отклонено', [
                 'event' => $event,
                 'member_id' => $auth['member_id'] ?? null,
                 'ip' => $request->ip(),
+                'прислан' => $this->fingerprint($auth['application_token'] ?? null),
+                'сохранён' => $this->fingerprint($portal?->application_token),
             ]);
 
             return response()->noContent(403);
@@ -77,6 +81,14 @@ class EventController extends Controller
         ProcessBitrixEvent::dispatch($portal->id, $event, $data);
 
         return response()->noContent();
+    }
+
+    /**
+     * Короткий отпечаток токена для логов: сравнить можно, восстановить нет.
+     */
+    protected function fingerprint(?string $token): string
+    {
+        return $token ? hash('crc32b', $token) : 'нет';
     }
 
     protected function tokenMatches(Portal $portal, ?string $token): bool
