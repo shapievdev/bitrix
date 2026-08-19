@@ -163,6 +163,8 @@ class BoardController extends Controller
             // Исполнители только те, чьи задачи вообще есть на доске —
             // список всех сотрудников портала здесь бесполезен.
             'responsibles' => $this->responsibles($board, $visibility, $viewer, $filters['mine']),
+
+            'accomplices' => $this->accomplices($board, $visibility, $viewer, $filters['mine']),
         ]);
     }
 
@@ -186,8 +188,52 @@ class BoardController extends Controller
             ->distinct()
             ->pluck('responsible_id');
 
+        return $this->namesFor($ids);
+    }
+
+    /**
+     * Соисполнители задач доски.
+     *
+     * Отбор такой же, как у исполнителей: только видимые задачи.
+     *
+     * @return array<int, array{id: int, name: string}>
+     */
+    protected function accomplices(
+        Board $board,
+        TaskVisibility $visibility,
+        ?PortalUser $viewer,
+        bool $onlyMine = false,
+    ): array {
+        $cards = $board->cards()
+            ->whereNotNull('accomplice_ids')
+            ->tap(fn ($query) => $visibility->apply($query, $viewer, $onlyMine))
+            ->select('task_cards.accomplice_ids');
+
+        // Соисполнители лежат массивом в одной ячейке, поэтому обычным
+        // distinct их не взять. Разворачиваем массивы на стороне базы:
+        // тянуть в память все карточки доски ради списка имён незачем.
+        // Разворот и обеззараживание — разными уровнями подзапроса:
+        // distinct рядом с функцией, возвращающей набор, применился бы
+        // к строкам до разворота.
+        $expanded = DB::query()
+            ->fromSub($cards, 'c')
+            ->selectRaw('jsonb_array_elements_text(c.accomplice_ids)::int as id');
+
+        $ids = DB::query()->fromSub($expanded, 'a')->distinct()->pluck('id');
+
+        return $this->namesFor($ids);
+    }
+
+    /**
+     * Имена сотрудников по идентификаторам в Битрикс24.
+     *
+     * @param  Collection<int, mixed>  $bitrixUserIds
+     * @return array<int, array{id: int, name: string}>
+     */
+    protected function namesFor(Collection $bitrixUserIds): array
+    {
         return PortalUser::query()
-            ->whereIn('bitrix_user_id', $ids)
+            ->whereIn('bitrix_user_id', $bitrixUserIds)
             ->orderBy('name')
             ->get()
             ->map(fn (PortalUser $u) => ['id' => $u->bitrix_user_id, 'name' => $u->name])
@@ -312,6 +358,7 @@ class BoardController extends Controller
             'mine' => $request->boolean('mine'),
             'priority' => $request->integer('priority') ?: null,
             'responsible' => $request->integer('responsible') ?: null,
+            'accomplice' => $request->integer('accomplice') ?: null,
             'deadline' => in_array($request->query('deadline'), ['overdue', 'with', 'without'], true)
                 ? $request->query('deadline')
                 : null,
@@ -340,6 +387,7 @@ class BoardController extends Controller
             })
             ->when($filters['priority'], fn ($q, $id) => $q->where('task_priority_id', $id))
             ->when($filters['responsible'], fn ($q, $id) => $q->where('responsible_id', $id))
+            ->when($filters['accomplice'], fn ($q, $id) => $q->whereJsonContains('accomplice_ids', $id))
             ->when($filters['deadline'] === 'overdue', fn ($q) => $q
                 ->whereNotNull('deadline')
                 ->whereNull('closed_at')

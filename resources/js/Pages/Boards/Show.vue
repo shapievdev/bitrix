@@ -18,6 +18,7 @@ const props = defineProps({
     priorities: { type: Array, required: true },
     filters: { type: Object, required: true },
     responsibles: { type: Array, required: true },
+    accomplices: { type: Array, required: true },
     viewer: { type: Object, required: true },
 })
 
@@ -37,6 +38,10 @@ const priorityOptions = computed(() =>
 
 const responsibleOptions = computed(() =>
     props.responsibles.map((r) => ({ value: r.id, label: r.name })),
+)
+
+const accompliceOptions = computed(() =>
+    props.accomplices.map((a) => ({ value: a.id, label: a.name })),
 )
 
 const deadlineOptions = [
@@ -70,6 +75,7 @@ const hasFilters = computed(() =>
         || props.filters.mine
         || props.filters.priority
         || props.filters.responsible
+        || props.filters.accomplice
         || props.filters.deadline,
     ),
 )
@@ -84,6 +90,7 @@ function reload(overrides = {}) {
         mine: props.filters.mine ? 1 : undefined,
         priority: props.filters.priority ?? undefined,
         responsible: props.filters.responsible ?? undefined,
+        accomplice: props.filters.accomplice ?? undefined,
         deadline: props.filters.deadline ?? undefined,
         ...overrides,
     }
@@ -148,7 +155,14 @@ function openFullForm() {
 
 function resetFilters() {
     search.value = ''
-    reload({ q: undefined, mine: undefined, priority: undefined, responsible: undefined, deadline: undefined })
+    reload({
+        q: undefined,
+        mine: undefined,
+        priority: undefined,
+        responsible: undefined,
+        accomplice: undefined,
+        deadline: undefined,
+    })
 }
 
 function toggleMine() {
@@ -217,7 +231,7 @@ function refreshData() {
     if (creating.value && newTask.title.trim()) return
 
     router.reload({
-        only: ['board', 'cards', 'columns', 'departments', 'units', 'responsibles'],
+        only: ['board', 'cards', 'columns', 'departments', 'units', 'responsibles', 'accomplices'],
         preserveScroll: true,
         preserveState: true,
         onSuccess: () => {
@@ -465,6 +479,19 @@ onBeforeUnmount(() => {
                             searchable
                             search-placeholder="Найти сотрудника"
                             @update:model-value="reload({ responsible: $event ?? undefined })"
+                        />
+
+                        <!-- Соисполнители отдельным фильтром, а не вместе с
+                             исполнителем: у задачи один ответственный и
+                             сколько угодно помощников, и вопрос «что на
+                             человеке» отличается от «где он помогает». -->
+                        <FilterSelect
+                            label="Соисполнитель"
+                            :options="accompliceOptions"
+                            :model-value="filters.accomplice"
+                            searchable
+                            search-placeholder="Найти сотрудника"
+                            @update:model-value="reload({ accomplice: $event ?? undefined })"
                         />
 
                         <FilterSelect

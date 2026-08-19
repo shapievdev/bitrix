@@ -180,6 +180,42 @@ class FiltersTest extends TestCase
             ->assertInertia(fn ($page) => $page->has('cards', 1)->where('cards.0.title', 'Моя'));
     }
 
+    public function test_фильтр_по_соисполнителю(): void
+    {
+        $this->card('С помощником', ['responsible_id' => 1, 'accomplice_ids' => [101, 102]]);
+        $this->card('С другим помощником', ['responsible_id' => 1, 'accomplice_ids' => [103]]);
+        $this->card('Одиночная', ['responsible_id' => 101]);
+
+        // Исполнитель в соисполнители не попадает: это разные роли, и
+        // фильтр отвечает на вопрос «где человек помогает».
+        $this->open(['accomplice' => 101])
+            ->assertInertia(fn ($page) => $page->has('cards', 1)->where('cards.0.title', 'С помощником'));
+    }
+
+    public function test_список_соисполнителей_только_с_доски(): void
+    {
+        PortalUser::create([
+            'portal_id' => $this->portal->id,
+            'bitrix_user_id' => 101,
+            'name' => 'Пётр Смирнов',
+        ]);
+        PortalUser::create([
+            'portal_id' => $this->portal->id,
+            'bitrix_user_id' => 500,
+            'name' => 'Никто Ничейный',
+        ]);
+
+        // Один и тот же человек в двух задачах — в списке один раз.
+        $this->card('Первая', ['accomplice_ids' => [101]]);
+        $this->card('Вторая', ['accomplice_ids' => [101]]);
+        $this->card('Без помощников');
+
+        $this->open()->assertInertia(fn ($page) => $page
+            ->has('accomplices', 1)
+            ->where('accomplices.0.name', 'Пётр Смирнов')
+        );
+    }
+
     public function test_фильтр_просроченных(): void
     {
         $this->card('Просрочена', ['deadline' => now()->subDay()]);
